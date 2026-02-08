@@ -4,11 +4,14 @@ services:
       context: .
       dockerfile: docker/Dockerfile
     working_dir: /app
+    environment:
+      - PYTHONPATH=/app
     volumes:
       - ./:/app
     stdin_open: true
     tty: true
     command: bash
+    
 
   jupyter:
     build:
