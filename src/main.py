@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 from src.menu.main.controllers.main_menu_controller import (
     MainMenuController,
     MainMenuEventType,
@@ -11,8 +9,6 @@ from src.menu.main.views.pygame_main_menu_view import PygameMainMenuView
 
 
 def _create_view() -> MainMenuView:
-    if os.environ.get("GAME_USE_CONSOLE_MENU") == "1":
-        return MainMenuView()
     try:
         return PygameMainMenuView()
     except Exception:

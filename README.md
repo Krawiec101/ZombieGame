@@ -4,8 +4,16 @@ Prosty projekt gry w Pythonie z menu glownym opartym o `pygame`.
 
 ## Szybki start gry
 
+Uruchom z katalogu glownego repozytorium:
+
 ```bash
-python src/main.py
+python -m src.main
+```
+
+Na Windows mozesz tez uzyc:
+
+```bash
+py -m src.main
 ```
 
 ## Wymagania
