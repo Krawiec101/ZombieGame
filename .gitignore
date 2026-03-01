@@ -1,1 +1,17 @@
 /Game.code-workspace
+/src/__pycache__/
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Virtual env
+.venv/
+venv/
+
+# Pytest cache
+.pytest_cache/
+
+# (opcjonalnie) mypy / coverage
+.mypy_cache/
+.coverage
+htmlcov/
