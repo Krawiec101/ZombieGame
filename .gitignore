@@ -1,6 +1,3 @@
-<<<<<<< Updated upstream
-/Game.code-workspace
-=======
 /Game.code-workspace
 /src/__pycache__/
 # Python bytecode
@@ -14,9 +11,9 @@ venv/
 # Pytest cache
 .pytest_cache/
 .mutmut-cache
+mutants/
 
 # (opcjonalnie) mypy / coverage
 .mypy_cache/
 .coverage
 htmlcov/
->>>>>>> Stashed changes
