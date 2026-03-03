@@ -1,0 +1,8 @@
+[tool.mutmut]
+paths_to_mutate = ["src/"]
+tests_dir = "tests/"
+runner = "python -m pytest -q"
+do_not_mutate = [
+  "src/ui/*.py",
+  "src/main.py",
+]

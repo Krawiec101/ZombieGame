@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: ["main", "master"]
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # KROK 1: Build Dockera (compose)
+      - name: Build Docker image(s)
+        run: docker compose build
+
+      # KROK 2: Testy + raport pokrycia
+      - name: Run tests with coverage
+        run: |
+          docker compose run --rm app pytest --cov=src --cov-report=term-missing --cov-report=xml:coverage.xml > pytest-coverage.txt
+          cat pytest-coverage.txt
+
+          COVERAGE_LINE=$(grep -E "^TOTAL" pytest-coverage.txt | tail -n 1)
+          COVERAGE_VALUE=$(echo "$COVERAGE_LINE" | awk '{print $NF}')
+
+          {
+            echo "## Test coverage"
+            echo ""
+            echo "Total coverage: **$COVERAGE_VALUE**"
+            echo ""
+            echo '```'
+            cat pytest-coverage.txt
+            echo '```'
+          } > coverage-summary.md
+
+          cat coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      # KROK 3: Testy mutacyjne
+      - name: Run mutation tests (mutmut)
+        run: docker compose run --rm app mutmut run
