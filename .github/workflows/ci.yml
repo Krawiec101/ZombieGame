@@ -5,6 +5,9 @@ on:
   push:
     branches: ["main", "master"]
 
+permissions:
+  contents: read
+
 jobs:
   docker:
     runs-on: ubuntu-latest
@@ -13,10 +16,104 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # KROK 1: Build Dockera (compose)
       - name: Build Docker image(s)
         run: docker compose build
 
-      # KROK 2: Testy
-      - name: Run tests (pytest)
-        run: docker compose run --rm app pytest
+      - name: Run tests with coverage
+        run: |
+          docker compose run --rm app pytest tests --ignore=mutants --cov=src --cov-report=term-missing --cov-report=xml:coverage.xml > pytest-coverage.txt
+          cat pytest-coverage.txt
+
+          COVERAGE_LINE=$(grep -E "^TOTAL" pytest-coverage.txt | tail -n 1)
+          COVERAGE_VALUE=$(echo "$COVERAGE_LINE" | awk '{print $NF}')
+
+          {
+            echo "## Test coverage"
+            echo ""
+            echo "Total coverage: **$COVERAGE_VALUE**"
+            echo ""
+            echo '```'
+            cat pytest-coverage.txt
+            echo '```'
+          } > coverage-summary.md
+
+          cat coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run mutation tests (mutmut)
+        run: |
+          docker compose run --rm app mutmut run
+          docker compose run --rm app sh -lc "mutmut results --all true" > mutmut-results.txt
+          cat mutmut-results.txt
+
+          python - <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          min_score = 90
+          max_survived = 0
+          max_suspicious = 0
+          max_timeout = 1
+
+          results_text = Path("mutmut-results.txt").read_text(encoding="utf-8", errors="ignore")
+
+          counts = {
+              "killed": 0,
+              "survived": 0,
+              "suspicious": 0,
+              "timeout": 0,
+              "no_tests": 0,
+          }
+
+          status_patterns = {
+              "killed": re.compile(r":\s*killed\s*$", re.IGNORECASE),
+              "survived": re.compile(r":\s*survived\s*$", re.IGNORECASE),
+              "suspicious": re.compile(r":\s*suspicious\s*$", re.IGNORECASE),
+              "timeout": re.compile(r":\s*timeout\s*$", re.IGNORECASE),
+              "no_tests": re.compile(r":\s*(no tests|untested)\s*$", re.IGNORECASE),
+          }
+
+          for line in results_text.splitlines():
+              for key, pattern in status_patterns.items():
+                  if pattern.search(line):
+                      counts[key] += 1
+                      break
+
+          total = sum(counts.values())
+          if total == 0:
+              print("FAIL: unable to parse mutant statuses from `mutmut results --all`.")
+              sys.exit(1)
+
+          score = counts["killed"] / total * 100
+
+          summary = (
+              "## Mutation quality gate\n\n"
+              f"- Mutation score: **{score:.1f}%** (min: {min_score}%)\n"
+              f"- Killed: **{counts['killed']}**\n"
+              f"- Survived: **{counts['survived']}** (max: {max_survived})\n"
+              f"- Suspicious: **{counts['suspicious']}** (max: {max_suspicious})\n"
+              f"- Timeout: **{counts['timeout']}** (max: {max_timeout})\n"
+              f"- No tests/untested: **{counts['no_tests']}**\n"
+          )
+
+          print(summary)
+          Path("mutation-summary.md").write_text(summary, encoding="utf-8")
+
+          failed = False
+          if score < min_score:
+              print(f"FAIL: mutation score {score:.1f}% < {min_score}%")
+              failed = True
+          if counts["survived"] > max_survived:
+              print(f"FAIL: survived mutants {counts['survived']} > {max_survived}")
+              failed = True
+          if counts["suspicious"] > max_suspicious:
+              print(f"FAIL: suspicious mutants {counts['suspicious']} > {max_suspicious}")
+              failed = True
+          if counts["timeout"] > max_timeout:
+              print(f"FAIL: timeout mutants {counts['timeout']} > {max_timeout}")
+              failed = True
+
+          sys.exit(1 if failed else 0)
+          PY
+
+          cat mutation-summary.md >> "$GITHUB_STEP_SUMMARY"

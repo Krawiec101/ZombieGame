@@ -1,7 +1,7 @@
-﻿import pytest
+import pytest
 
-from src.core.orders import ExitRequested, LoadGameRequested, NewGameRequested
-from src.ui.console_main_menu_view import map_choice_to_order
+from core.orders import ExitRequested, LoadGameRequested, NewGameRequested
+from ui.console_main_menu_view import map_choice_to_order
 
 
 @pytest.mark.parametrize(

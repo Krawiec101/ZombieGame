@@ -1,4 +1,4 @@
-﻿# Game
+# Game
 
 Prosty projekt gry w Pythonie z rozdzieleniem warstw:
 - `src/core` - logika i Orders (bez `pygame`)
@@ -41,16 +41,36 @@ Testy nie wymagaja `pygame`:
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
+## Test coverage (CI)
+
+Pipeline CI uruchamia `pytest` z `pytest-cov` i publikuje podsumowanie pokrycia w zakladce `Checks` (GitHub Step Summary).
+
+## Testy mutacyjne
+
+Projekt korzysta z `mutmut`:
+
+```bash
+python -m mutmut run
+python -m mutmut results --all true
+```
+
+W CI jest ustawiona bramka jakosci mutacji:
+- minimalny `mutation score`: `90%`
+- `survived`: `0`
+- `suspicious`: `0`
+- `timeout`: `1`
+
 ## Wymagania
 
 - Python 3.12+
 - `pip`
 
-## Uruchomienie przez Docker Compose
+## Docker Compose
 
 Build i uruchomienie testow:
 
 ```bash
 docker compose build
 docker compose run --rm app pytest
+docker compose run --rm app mutmut run
 ```

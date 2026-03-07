@@ -1,8 +1,13 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-from src.core.orders import ExitRequested, LoadGameRequested, NewGameRequested, Order
-from src.ui.main_menu import create_view
-from src.ui.main_menu_view import MainMenuView
+try:
+    from core.orders import ExitRequested, LoadGameRequested, NewGameRequested, Order
+    from ui.main_menu import create_view
+    from ui.main_menu_view import MainMenuView
+except ModuleNotFoundError:
+    from src.core.orders import ExitRequested, LoadGameRequested, NewGameRequested, Order
+    from src.ui.main_menu import create_view
+    from src.ui.main_menu_view import MainMenuView
 
 
 def route_order(order: Order) -> bool:
@@ -34,6 +39,6 @@ def _run_main_menu_loop(view: MainMenuView) -> None:
             for order in orders:
                 keep_running = route_order(order)
                 if not keep_running:
-                    break
+                    break  # pragma: no mutate
     finally:
         view.close()

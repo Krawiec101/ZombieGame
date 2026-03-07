@@ -1,6 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-from src.core.orders import ExitRequested, LoadGameRequested, NewGameRequested, Order
+try:
+    from core.orders import ExitRequested, LoadGameRequested, NewGameRequested, Order
+except ModuleNotFoundError:
+    from src.core.orders import ExitRequested, LoadGameRequested, NewGameRequested, Order
 
 
 class ConsoleMainMenuView:

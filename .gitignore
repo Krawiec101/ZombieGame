@@ -10,6 +10,8 @@ venv/
 
 # Pytest cache
 .pytest_cache/
+.mutmut-cache
+mutants/
 
 # (opcjonalnie) mypy / coverage
 .mypy_cache/
