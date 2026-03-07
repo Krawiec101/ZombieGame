@@ -19,6 +19,66 @@ jobs:
       - name: Build Docker image(s)
         run: docker compose build
 
+      - name: Run SCA dependency audit (pip-audit)
+        run: |
+          set +e
+          docker compose run --rm sca > sca-report.txt 2>&1
+          SCA_EXIT=$?
+          set -e
+
+          cat sca-report.txt
+
+          {
+            echo "## SCA dependency audit"
+            echo ""
+            if [ "$SCA_EXIT" -eq 0 ]; then
+              echo "Status: **PASS**"
+            else
+              echo "Status: **FAIL**"
+            fi
+            echo ""
+            echo '```'
+            cat sca-report.txt
+            echo '```'
+          } > sca-summary.md
+
+          cat sca-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$SCA_EXIT" -ne 0 ]; then
+            echo "FAIL: dependency vulnerabilities found by pip-audit"
+            exit "$SCA_EXIT"
+          fi
+
+      - name: Run static code analysis (ruff)
+        run: |
+          set +e
+          docker compose run --rm lint > lint-report.txt 2>&1
+          LINT_EXIT=$?
+          set -e
+
+          cat lint-report.txt
+
+          {
+            echo "## Static code analysis (ruff)"
+            echo ""
+            if [ "$LINT_EXIT" -eq 0 ]; then
+              echo "Status: **PASS**"
+            else
+              echo "Status: **FAIL**"
+            fi
+            echo ""
+            echo '```'
+            cat lint-report.txt
+            echo '```'
+          } > lint-summary.md
+
+          cat lint-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$LINT_EXIT" -ne 0 ]; then
+            echo "FAIL: lint issues found by ruff"
+            exit "$LINT_EXIT"
+          fi
+
       - name: Run tests with coverage
         run: |
           docker compose run --rm app pytest tests --ignore=mutants --cov=src --cov-report=term-missing --cov-report=xml:coverage.xml > pytest-coverage.txt

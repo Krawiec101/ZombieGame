@@ -12,6 +12,29 @@ services:
     tty: true
     command: bash
     
+  sca:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - ./:/app
+    command: >
+      sh -lc "pip-audit -r requirements.txt"
+
+  lint:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - ./:/app
+    command: >
+      sh -lc "ruff check src tests"
 
   jupyter:
     build:
