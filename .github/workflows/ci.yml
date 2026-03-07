@@ -81,7 +81,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          docker compose run --rm app pytest tests --ignore=mutants --cov=src --cov-report=term-missing --cov-report=xml:coverage.xml > pytest-coverage.txt
+          docker compose run --rm app pytest tests --ignore=mutants --ignore=tests/architecture --cov=src --cov-report=term-missing --cov-report=xml:coverage.xml > pytest-coverage.txt
           cat pytest-coverage.txt
 
           COVERAGE_LINE=$(grep -E "^TOTAL" pytest-coverage.txt | tail -n 1)
@@ -98,6 +98,36 @@ jobs:
           } > coverage-summary.md
 
           cat coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run architecture tests (PyTestArch)
+        run: |
+          set +e
+          docker compose run --rm app pytest -q tests/architecture > architecture-report.txt 2>&1
+          ARCH_EXIT=$?
+          set -e
+
+          cat architecture-report.txt
+
+          {
+            echo "## Architecture tests (PyTestArch)"
+            echo ""
+            if [ "$ARCH_EXIT" -eq 0 ]; then
+              echo "Status: **PASS**"
+            else
+              echo "Status: **FAIL**"
+            fi
+            echo ""
+            echo '```'
+            cat architecture-report.txt
+            echo '```'
+          } > architecture-summary.md
+
+          cat architecture-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$ARCH_EXIT" -ne 0 ]; then
+            echo "FAIL: architecture rules violated"
+            exit "$ARCH_EXIT"
+          fi
 
       - name: Run mutation tests (mutmut)
         run: |

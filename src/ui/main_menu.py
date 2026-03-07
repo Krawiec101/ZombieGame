@@ -4,10 +4,10 @@ import os
 
 try:
     from ui.console_main_menu_view import ConsoleMainMenuView
-    from ui.main_menu_view import MainMenuView
+    from contracts.main_menu_view import MainMenuView
 except ModuleNotFoundError:
     from src.ui.console_main_menu_view import ConsoleMainMenuView
-    from src.ui.main_menu_view import MainMenuView
+    from src.contracts.main_menu_view import MainMenuView
 
 
 _USE_CONSOLE_VALUES = {"1", "true", "yes", "on"}
