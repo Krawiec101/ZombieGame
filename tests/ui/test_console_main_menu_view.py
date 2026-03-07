@@ -1,31 +1,23 @@
-from menu.main.views.main_menu_view import MainMenuView
+import pytest
+
+from core.orders import ExitRequested, LoadGameRequested, NewGameRequested
+from ui.console_main_menu_view import map_choice_to_order
 
 
-def test_main_menu_view_read_choice_strips_whitespace(monkeypatch) -> None:
-    view = MainMenuView()
-    monkeypatch.setattr("builtins.input", lambda _: " 2  ")
+@pytest.mark.parametrize(
+    ("raw", "expected_type"),
+    [
+        ("1", NewGameRequested),
+        ("2", LoadGameRequested),
+        ("3", ExitRequested),
+    ],
+)
+def test_map_choice_to_order_returns_expected_order(raw: str, expected_type: type) -> None:
+    order = map_choice_to_order(raw)
 
-    choice = view.read_choice()
-
-    assert choice == "2"
-
-
-def test_main_menu_view_render_prints_menu(capsys) -> None:
-    view = MainMenuView()
-
-    view.render()
-
-    out = capsys.readouterr().out
-    assert "=== MENU GLOWNE ===" in out
-    assert "1) Nowa gra" in out
-    assert "2) Wczytaj" in out
-    assert "3) Wyjdz" in out
+    assert isinstance(order, expected_type)
 
 
-def test_main_menu_view_render_invalid_choice_prints_message(capsys) -> None:
-    view = MainMenuView()
-
-    view.render_invalid_choice()
-
-    out = capsys.readouterr().out
-    assert "Niepoprawny wybor. Sprobuj ponownie." in out
+@pytest.mark.parametrize("raw", ["", "0", "4", "x", " "])
+def test_map_choice_to_order_returns_none_for_invalid_input(raw: str) -> None:
+    assert map_choice_to_order(raw) is None

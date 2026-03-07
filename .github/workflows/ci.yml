@@ -21,7 +21,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          docker compose run --rm app pytest tests --ignore=mutants --cov=src/menu --cov-report=term-missing --cov-report=xml:coverage.xml > pytest-coverage.txt
+          docker compose run --rm app pytest tests --ignore=mutants --cov=src --cov-report=term-missing --cov-report=xml:coverage.xml > pytest-coverage.txt
           cat pytest-coverage.txt
 
           COVERAGE_LINE=$(grep -E "^TOTAL" pytest-coverage.txt | tail -n 1)
