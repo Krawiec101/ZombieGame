@@ -60,6 +60,26 @@ W CI jest ustawiona bramka jakosci mutacji:
 - `suspicious`: `0`
 - `timeout`: `1`
 
+## SCA (zaleznosci)
+
+Projekt korzysta z `pip-audit` do skanowania podatnosci w zaleznosciach (`Software Composition Analysis`):
+
+```bash
+python -m pip_audit -r requirements.txt
+```
+
+W CI/CD skan uruchamia sie automatycznie przed testami. Wykrycie podatnosci powoduje blad pipeline.
+
+## SCA (statyczna analiza kodu / linter)
+
+Projekt korzysta z `ruff` do statycznej analizy kodu:
+
+```bash
+python -m ruff check src tests
+```
+
+W CI/CD linter uruchamia sie automatycznie przed testami. Wykrycie problemow powoduje blad pipeline.
+
 ## Wymagania
 
 - Python 3.12+
@@ -73,4 +93,6 @@ Build i uruchomienie testow:
 docker compose build
 docker compose run --rm app pytest
 docker compose run --rm app mutmut run
+docker compose run --rm sca
+docker compose run --rm lint
 ```
