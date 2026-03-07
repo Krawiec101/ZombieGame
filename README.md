@@ -1,9 +1,16 @@
 # Game
 
 Prosty projekt gry w Pythonie z rozdzieleniem warstw:
-- `src/core` - logika i Orders (bez `pygame`)
-- `src/ui` - implementacje menu (`console` i `pygame`)
-- `src/app` - petla aplikacji i routing Orders
+- `src/core` - logika biznesowa menu i mapowanie `UIEvent -> DomainEvent` (bez `pygame`)
+- `src/ui` - implementacje menu (`console` i `pygame`), bez wywolywania logiki core bezposrednio
+- `src/app` - orchestrator spinajacy UI i Core (petla aplikacji + routing zdarzen)
+- `src/contracts` - wspolne kontrakty zdarzen i interfejsow miedzy warstwami
+
+Komunikacja miedzy warstwami odbywa sie przez zdarzenia:
+- UI -> App/Core: `UIEvent` (komendy uzytkownika)
+- Core -> App/UI: `DomainEvent` (decyzje/routing)
+
+`pygame` jest importowany lazy w warstwie UI (dopiero przy tworzeniu widoku pygame), co pozwala uruchamiac testy w srodowiskach headless.
 
 ## Uruchomienie gry
 
@@ -41,9 +48,15 @@ Testy nie wymagaja `pygame`:
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
+Tylko testy architektury (PyTestArch):
+
+```bash
+.\.venv\Scripts\python.exe -m pytest -q tests/architecture
+```
+
 ## Test coverage (CI)
 
-Pipeline CI uruchamia `pytest` z `pytest-cov` i publikuje podsumowanie pokrycia w zakladce `Checks` (GitHub Step Summary).
+Pipeline CI uruchamia `pytest` z `pytest-cov` dla testow funkcjonalnych/jednostkowych oraz osobny krok dla testow architektury (`tests/architecture`, PyTestArch). Podsumowania sa publikowane w zakladce `Checks` (GitHub Step Summary).
 
 ## Testy mutacyjne
 

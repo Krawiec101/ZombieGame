@@ -1,27 +1,30 @@
 from __future__ import annotations
 
 try:
-    from core.orders import ExitRequested, LoadGameRequested, NewGameRequested, Order
+    from contracts.events import (
+        DomainEvent,
+        ExitFlowRouted,
+        LoadGameFlowRouted,
+        NewGameFlowRouted,
+    )
+    from contracts.main_menu_view import MainMenuView
+    from core.main_menu import handle_main_menu_ui_event
     from ui.main_menu import create_view
-    from ui.main_menu_view import MainMenuView
 except ModuleNotFoundError:
-    from src.core.orders import ExitRequested, LoadGameRequested, NewGameRequested, Order
+    from src.contracts.events import (
+        DomainEvent,
+        ExitFlowRouted,
+        LoadGameFlowRouted,
+        NewGameFlowRouted,
+    )
+    from src.contracts.main_menu_view import MainMenuView
+    from src.core.main_menu import handle_main_menu_ui_event
     from src.ui.main_menu import create_view
-    from src.ui.main_menu_view import MainMenuView
 
 
-def route_order(order: Order) -> bool:
-    if isinstance(order, ExitRequested):
+def route_domain_event(event: DomainEvent) -> bool:
+    if isinstance(event, (ExitFlowRouted, NewGameFlowRouted, LoadGameFlowRouted)):
         return False
-
-    if isinstance(order, NewGameRequested):
-        print("Wybrano: Nowa gra")
-        return False
-
-    if isinstance(order, LoadGameRequested):
-        print("Wybrano: Wczytaj")
-        return False
-
     return True
 
 
@@ -35,9 +38,10 @@ def _run_main_menu_loop(view: MainMenuView) -> None:
     try:
         while keep_running:
             view.render()
-            orders = view.poll_orders()
-            for order in orders:
-                keep_running = route_order(order)
+            for ui_event in view.poll_ui_events():
+                domain_event = handle_main_menu_ui_event(ui_event)
+                view.handle_domain_event(domain_event)
+                keep_running = route_domain_event(domain_event)
                 if not keep_running:
                     break  # pragma: no mutate
     finally:

@@ -1,23 +1,12 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
-class Order:
-    pass
+try:
+    from contracts.events import ExitRequested, LoadGameRequested, NewGameRequested, UIEvent
+except ModuleNotFoundError:
+    from src.contracts.events import ExitRequested, LoadGameRequested, NewGameRequested, UIEvent
 
 
-@dataclass(frozen=True)
-class NewGameRequested(Order):
-    pass
+# Backward-compatible alias. New code should use contracts.events.UIEvent directly.
+Order = UIEvent
 
-
-@dataclass(frozen=True)
-class LoadGameRequested(Order):
-    pass
-
-
-@dataclass(frozen=True)
-class ExitRequested(Order):
-    pass
+__all__ = ["Order", "NewGameRequested", "LoadGameRequested", "ExitRequested"]

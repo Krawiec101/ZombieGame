@@ -1,7 +1,7 @@
 import pytest
 
-from core.orders import ExitRequested, LoadGameRequested, NewGameRequested
-from ui.console_main_menu_view import map_choice_to_order
+from contracts.events import ExitRequested, LoadGameRequested, NewGameRequested
+from ui.console_main_menu_view import map_choice_to_ui_event
 
 
 @pytest.mark.parametrize(
@@ -13,11 +13,11 @@ from ui.console_main_menu_view import map_choice_to_order
     ],
 )
 def test_map_choice_to_order_returns_expected_order(raw: str, expected_type: type) -> None:
-    order = map_choice_to_order(raw)
+    order = map_choice_to_ui_event(raw)
 
     assert isinstance(order, expected_type)
 
 
 @pytest.mark.parametrize("raw", ["", "0", "4", "x", " "])
 def test_map_choice_to_order_returns_none_for_invalid_input(raw: str) -> None:
-    assert map_choice_to_order(raw) is None
+    assert map_choice_to_ui_event(raw) is None
