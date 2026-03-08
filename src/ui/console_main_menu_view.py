@@ -11,6 +11,7 @@ try:
         NewGameRequested,
         UIEvent,
     )
+    from ui.i18n import text
 except ModuleNotFoundError:
     from src.contracts.events import (
         DomainEvent,
@@ -22,30 +23,44 @@ except ModuleNotFoundError:
         NewGameRequested,
         UIEvent,
     )
+    from src.ui.i18n import text
+
+
+_MENU_OPTION_LABEL_KEYS = {
+    "1": "main_menu.option.new_game",
+    "2": "main_menu.option.load_game",
+    "3": "main_menu.option.exit",
+}
 
 
 class ConsoleMainMenuView:
     def render(self) -> None:
-        print("\n=== MENU GLOWNE ===")
-        print("1) Nowa gra")
-        print("2) Wczytaj")
-        print("3) Wyjdz")
+        print()
+        print(text("console.menu.header"))
+        for choice, label_key in _MENU_OPTION_LABEL_KEYS.items():
+            print(
+                text(
+                    "console.menu.option",
+                    choice=choice,
+                    label=text(label_key),
+                )
+            )
 
     def poll_ui_events(self) -> list[UIEvent]:
-        raw = input("Wybierz (1-3): ").strip()
+        raw = input(text("main_menu.prompt.choice")).strip()
         event = map_choice_to_ui_event(raw)
         if event is None:
-            print("Niepoprawny wybor. Sprobuj ponownie.")
+            print(text("main_menu.error.invalid_choice_retry"))
             return []
         return [event]
 
     def handle_domain_event(self, event: DomainEvent) -> None:
         if isinstance(event, NewGameFlowRouted):
-            print("Szkic: przejscie do nowej gry")
+            print(text("flow.new_game.stub"))
         elif isinstance(event, LoadGameFlowRouted):
-            print("Szkic: przejscie do wczytania gry")
+            print(text("flow.load_game.stub"))
         elif isinstance(event, ExitFlowRouted):
-            print("Wyjscie z aplikacji")
+            print(text("flow.exit"))
 
     def close(self) -> None:
         pass

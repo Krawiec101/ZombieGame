@@ -40,6 +40,22 @@ Windows PowerShell:
 $env:GAME_USE_CONSOLE_MENU='1'; .\.venv\Scripts\python.exe -m src.main
 ```
 
+## Wersje jezykowe (i18n)
+
+Wszystkie napisy UI sa ladowane z `src/ui/locales/*.json`.
+
+Domyslny jezyk to `pl`. Mozna wymusic inny kod jezyka zmienna:
+
+```bash
+GAME_LANGUAGE=pl
+```
+
+Windows PowerShell:
+
+```powershell
+$env:GAME_LANGUAGE='pl'; .\.venv\Scripts\python.exe -m src.main
+```
+
 ## Testy
 
 Testy nie wymagaja `pygame`:

@@ -12,6 +12,7 @@ from contracts.events import (
     LoadGameFlowRouted,
     LoadGameRequested,
     NewGameFlowRouted,
+    NewGameRequested,
     UIEvent,
     UIEventIgnored,
 )
@@ -50,8 +51,8 @@ def test_route_domain_event_exit_stops_loop() -> None:
     assert app_module.route_domain_event(ExitFlowRouted()) is False
 
 
-def test_route_domain_event_new_game_stops_loop() -> None:
-    assert app_module.route_domain_event(NewGameFlowRouted()) is False
+def test_route_domain_event_new_game_keeps_loop_running() -> None:
+    assert app_module.route_domain_event(NewGameFlowRouted()) is True
 
 
 def test_route_domain_event_load_game_stops_loop() -> None:
@@ -98,6 +99,18 @@ def test_run_main_menu_loop_repeats_when_no_events_then_stops() -> None:
     assert view.poll_calls == 2
     assert view.close_calls == 1
     assert isinstance(view.handled_domain_events[0], LoadGameFlowRouted)
+
+
+def test_run_main_menu_loop_continues_after_new_game_until_exit() -> None:
+    view = FakeView([[NewGameRequested()], [ExitRequested()]])
+
+    app_module._run_main_menu_loop(view)
+
+    assert view.render_calls == 2
+    assert view.poll_calls == 2
+    assert view.close_calls == 1
+    assert isinstance(view.handled_domain_events[0], NewGameFlowRouted)
+    assert isinstance(view.handled_domain_events[1], ExitFlowRouted)
 
 
 def test_run_main_menu_loop_routes_unknown_then_stops_after_next_batch() -> None:
