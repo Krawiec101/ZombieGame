@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.app.app import run
+from app.app import run
 
 
 if __name__ == "__main__":
