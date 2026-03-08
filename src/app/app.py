@@ -5,7 +5,6 @@ try:
         DomainEvent,
         ExitFlowRouted,
         LoadGameFlowRouted,
-        NewGameFlowRouted,
     )
     from contracts.main_menu_view import MainMenuView
     from core.main_menu import handle_main_menu_ui_event
@@ -15,7 +14,6 @@ except ModuleNotFoundError:
         DomainEvent,
         ExitFlowRouted,
         LoadGameFlowRouted,
-        NewGameFlowRouted,
     )
     from src.contracts.main_menu_view import MainMenuView
     from src.core.main_menu import handle_main_menu_ui_event
@@ -23,7 +21,7 @@ except ModuleNotFoundError:
 
 
 def route_domain_event(event: DomainEvent) -> bool:
-    if isinstance(event, (ExitFlowRouted, NewGameFlowRouted, LoadGameFlowRouted)):
+    if isinstance(event, (ExitFlowRouted, LoadGameFlowRouted)):
         return False
     return True
 
