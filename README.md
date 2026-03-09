@@ -2,7 +2,9 @@
 
 Prosty projekt gry w Pythonie z rozdzieleniem warstw:
 - `src/core` - logika biznesowa menu i mapowanie `UIEvent -> DomainEvent` (bez `pygame`)
-- `src/ui` - implementacje menu (`console` i `pygame`), bez wywolywania logiki core bezposrednio
+- `src/ui` - warstwa prezentacji, bez wywolywania logiki core bezposrednio:
+  - `src/ui/menus` - menu glowne i menu kontekstowe w trakcie gry
+  - `src/ui/game_views` - widoki renderujace rozgrywke
 - `src/app` - orchestrator spinajacy UI i Core (petla aplikacji + routing zdarzen)
 - `src/contracts` - wspolne kontrakty zdarzen i interfejsow miedzy warstwami
 
@@ -25,6 +27,9 @@ Na Windows (venv lokalny):
 ```bash
 .\.venv\Scripts\python.exe -m src.main
 ```
+
+Domyslnie widok `pygame` startuje w trybie pelnoekranowym. Jesli fullscreen nie jest dostepny,
+aplikacja automatycznie przechodzi na okno `1280x720`.
 
 ## Wymuszenie menu konsolowego
 

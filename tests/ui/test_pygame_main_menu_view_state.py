@@ -5,7 +5,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-import ui.pygame_main_menu_view as pygame_view_module
+import ui.menus.pygame_main_menu_view as pygame_view_module
 from contracts.events import (
     ExitFlowRouted,
     ExitRequested,
@@ -37,8 +37,10 @@ class _FakeDisplay:
         self._screen = screen
         self.caption: str | None = None
         self.flip_calls = 0
+        self.set_mode_calls: list[tuple[tuple[int, int], int]] = []
 
-    def set_mode(self, _size: tuple[int, int]) -> object:
+    def set_mode(self, size: tuple[int, int], flags: int = 0) -> object:
+        self.set_mode_calls.append((size, flags))
         return self._screen
 
     def set_caption(self, caption: str) -> None:
@@ -198,6 +200,7 @@ class _FakePygame(ModuleType):
     K_KP_ENTER = 19
     K_BACKSPACE = 20
     SRCALPHA = 100
+    FULLSCREEN = 101
 
     def __init__(self) -> None:
         super().__init__("pygame")
@@ -236,6 +239,14 @@ def _event(event_type: int, **kwargs: object) -> SimpleNamespace:
     return SimpleNamespace(type=event_type, **kwargs)
 
 
+def _blitted_texts(fake_pygame: _FakePygame) -> list[str]:
+    return [
+        surface._text
+        for surface, _position in fake_pygame._screen.blit_calls
+        if hasattr(surface, "_text")
+    ]
+
+
 @pytest.fixture
 def pygame_view(monkeypatch: pytest.MonkeyPatch):
     fake_pygame = _FakePygame()
@@ -271,6 +282,12 @@ def test_poll_ui_events_maps_menu_keyboard_shortcuts(
     assert len(events) == 1
     assert isinstance(events[0], expected_type)
     assert fake_pygame._clock.ticks == [60]
+
+
+def test_view_init_prefers_fullscreen_mode(pygame_view) -> None:
+    _view, fake_pygame = pygame_view
+
+    assert fake_pygame.display.set_mode_calls[0] == ((0, 0), fake_pygame.FULLSCREEN)
 
 
 def test_poll_ui_events_sets_hint_for_unknown_menu_key(pygame_view) -> None:
@@ -358,10 +375,57 @@ def test_poll_ui_events_welcome_modal_enter_starts_game_mode(pygame_view) -> Non
     assert view._mode == "game"
 
 
-def test_poll_ui_events_game_mode_escape_requests_exit(pygame_view) -> None:
+def test_poll_ui_events_game_mode_escape_opens_context_menu(pygame_view) -> None:
     view, fake_pygame = pygame_view
     view._mode = "game"
     fake_pygame.event.queue = [_event(fake_pygame.KEYDOWN, key=fake_pygame.K_ESCAPE, unicode="")]
+
+    events = view.poll_ui_events()
+
+    assert events == []
+    assert view._mode == "game_context_menu"
+
+
+def test_poll_ui_events_game_context_menu_escape_returns_to_game(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game_context_menu"
+    fake_pygame.event.queue = [_event(fake_pygame.KEYDOWN, key=fake_pygame.K_ESCAPE, unicode="")]
+
+    events = view.poll_ui_events()
+
+    assert events == []
+    assert view._mode == "game"
+
+
+def test_poll_ui_events_game_context_menu_resume_click_returns_to_game(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game_context_menu"
+    view._context_menu_hitboxes = {"resume": _AlwaysHitbox()}
+    fake_pygame.event.queue = [_event(fake_pygame.MOUSEBUTTONDOWN, button=1, pos=(20, 20))]
+
+    events = view.poll_ui_events()
+
+    assert events == []
+    assert view._mode == "game"
+
+
+def test_poll_ui_events_game_context_menu_to_menu_click_returns_to_menu(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game_context_menu"
+    view._context_menu_hitboxes = {"to_menu": _AlwaysHitbox()}
+    fake_pygame.event.queue = [_event(fake_pygame.MOUSEBUTTONDOWN, button=1, pos=(20, 20))]
+
+    events = view.poll_ui_events()
+
+    assert events == []
+    assert view._mode == "menu"
+
+
+def test_poll_ui_events_game_context_menu_exit_click_requests_exit(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game_context_menu"
+    view._context_menu_hitboxes = {"exit": _AlwaysHitbox()}
+    fake_pygame.event.queue = [_event(fake_pygame.MOUSEBUTTONDOWN, button=1, pos=(20, 20))]
 
     events = view.poll_ui_events()
 
@@ -401,7 +465,7 @@ def test_close_is_idempotent(pygame_view) -> None:
     assert fake_pygame.quit_calls == 1
 
 
-def test_render_menu_draws_items_and_hint_and_flips_display(pygame_view) -> None:
+def test_render_menu_draws_items_and_flips_display(pygame_view) -> None:
     view, fake_pygame = pygame_view
     view._mode = "menu"
     view._last_hint = "hint-text"
@@ -411,6 +475,19 @@ def test_render_menu_draws_items_and_hint_and_flips_display(pygame_view) -> None
     assert fake_pygame.display.flip_calls == 1
     assert set(view._menu_hitboxes) == {"1", "2", "3"}
     assert fake_pygame._screen.fill_calls[-1] == (18, 22, 34)
+
+
+def test_render_menu_hides_helper_texts(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "menu"
+    view._last_hint = "hint-text"
+
+    view.render()
+
+    blitted_texts = _blitted_texts(fake_pygame)
+    assert "main_menu.hint.esc_exit" not in blitted_texts
+    assert "main_menu.hint.mouse_or_keys" not in blitted_texts
+    assert "hint-text" not in blitted_texts
 
 
 def test_render_game_clears_menu_hitboxes_and_draws_game_background(pygame_view) -> None:
@@ -426,6 +503,38 @@ def test_render_game_clears_menu_hitboxes_and_draws_game_background(pygame_view)
     assert fake_pygame._screen.fill_calls[-1] == (14, 18, 28)
 
 
+def test_render_game_context_menu_sets_context_actions_and_flips_display(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game_context_menu"
+
+    view.render()
+
+    assert fake_pygame.display.flip_calls == 1
+    assert set(view._context_menu_hitboxes) == {"resume", "to_menu", "exit"}
+
+
+def test_render_game_context_menu_centers_modal_on_screen(pygame_view) -> None:
+    view, _fake_pygame = pygame_view
+    view._mode = "game_context_menu"
+
+    view.render()
+
+    resume_hitbox = view._context_menu_hitboxes["resume"]
+    assert resume_hitbox.left == 180
+    assert resume_hitbox.top == 158
+
+
+def test_render_game_context_menu_hides_helper_texts(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game_context_menu"
+
+    view.render()
+
+    blitted_texts = _blitted_texts(fake_pygame)
+    assert "game.context_menu.hint.toggle" not in blitted_texts
+    assert "game.context_menu.title" not in blitted_texts
+
+
 def test_render_name_modal_assigns_ok_hitbox_and_draws_overlay(pygame_view) -> None:
     view, fake_pygame = pygame_view
     view._mode = "name_modal"
@@ -437,6 +546,16 @@ def test_render_name_modal_assigns_ok_hitbox_and_draws_overlay(pygame_view) -> N
     assert view._modal_ok_hitbox.width == 124
     assert fake_pygame.surfaces
     assert fake_pygame.surfaces[-1].fill_calls[-1] == (5, 8, 14, 176)
+
+
+def test_render_name_modal_hides_helper_texts(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "name_modal"
+    view._character_name_input = "Ranger"
+
+    view.render()
+
+    assert "modal.new_character.confirm_hint" not in _blitted_texts(fake_pygame)
 
 
 def test_render_welcome_modal_draws_frame_and_sets_ok_hitbox(

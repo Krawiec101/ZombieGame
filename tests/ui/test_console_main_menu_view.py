@@ -1,7 +1,7 @@
 import pytest
 
 from contracts.events import ExitRequested, LoadGameRequested, NewGameRequested
-from ui.console_main_menu_view import map_choice_to_ui_event
+from ui.menus.console_main_menu_view import map_choice_to_ui_event
 
 
 @pytest.mark.parametrize(

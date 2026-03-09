@@ -14,6 +14,7 @@ try:
         UIEvent,
     )
     from ui.i18n import text
+    from ui.game_views.pygame_game_view import PygameGameView
 except ModuleNotFoundError:
     from src.contracts.events import (
         DomainEvent,
@@ -26,6 +27,7 @@ except ModuleNotFoundError:
         UIEvent,
     )
     from src.ui.i18n import text
+    from src.ui.game_views.pygame_game_view import PygameGameView
 
 
 _MENU_OPTION_LABEL_KEYS = {
@@ -33,6 +35,8 @@ _MENU_OPTION_LABEL_KEYS = {
     "2": "main_menu.option.load_game",
     "3": "main_menu.option.exit",
 }
+_WINDOWED_FALLBACK_SIZE = (1280, 720)
+_MODAL_SHELL_SIZE = (480, 248)
 
 
 class PygameMainMenuView:
@@ -43,19 +47,34 @@ class PygameMainMenuView:
         pygame = self._pygame
 
         pygame.init()
-        self._screen = pygame.display.set_mode((720, 420))
+        self._screen = self._create_screen()
         pygame.display.set_caption(text("app.window.caption"))
         self._clock = pygame.time.Clock()
         self._font_title = pygame.font.SysFont("arial", 42, bold=True)
         self._font_menu = pygame.font.SysFont("arial", 30)
         self._font_hint = pygame.font.SysFont("arial", 22)
+        self._game_view = PygameGameView(
+            pygame_module=pygame,
+            screen=self._screen,
+            font_title=self._font_title,
+            font_menu=self._font_menu,
+            font_hint=self._font_hint,
+        )
         self._last_hint: str | None = None
         self._menu_hitboxes: dict[str, Any] = {}
+        self._context_menu_hitboxes: dict[str, Any] = {}
         self._modal_ok_hitbox: Any | None = None
         self._mode = "menu"
         self._character_name = ""
         self._character_name_input = ""
         self._closed = False
+
+    def _create_screen(self) -> Any:
+        pygame = self._pygame
+        try:
+            return pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        except Exception:
+            return pygame.display.set_mode(_WINDOWED_FALLBACK_SIZE)
 
     def render(self) -> None:
         if self._mode == "menu":
@@ -67,6 +86,8 @@ class PygameMainMenuView:
             self._render_name_modal()
         elif self._mode == "welcome_modal":
             self._render_welcome_modal()
+        elif self._mode == "game_context_menu":
+            self._render_game_context_menu()
 
         self._pygame.display.flip()
 
@@ -86,6 +107,8 @@ class PygameMainMenuView:
                 self._handle_welcome_modal_event(pygame_event, events)
             elif self._mode == "game":
                 self._handle_game_event(pygame_event, events)
+            elif self._mode == "game_context_menu":
+                self._handle_game_context_menu_event(pygame_event, events)
 
         self._clock.tick(60)
         return events
@@ -95,6 +118,7 @@ class PygameMainMenuView:
             self._character_name = ""
             self._character_name_input = ""
             self._modal_ok_hitbox = None
+            self._context_menu_hitboxes = {}
             self._last_hint = None
             self._mode = "name_modal"
         elif isinstance(event, LoadGameFlowRouted):
@@ -136,34 +160,33 @@ class PygameMainMenuView:
                 240,
             ),
         }
-        self._draw_text(text("main_menu.hint.esc_exit"), self._font_hint, (160, 172, 190), 315)
-        self._draw_text(
-            text("main_menu.hint.mouse_or_keys"),
-            self._font_hint,
-            (160, 172, 190),
-            342,
-        )
-        if self._last_hint:
-            self._draw_text(self._last_hint, self._font_hint, (255, 120, 120), 380)
 
     def _render_game(self) -> None:
-        self._screen.fill((14, 18, 28))
         self._menu_hitboxes = {}
-        self._draw_text(text("game.mode.title"), self._font_title, (233, 236, 240), 52)
-        if self._character_name:
-            self._draw_text(
-                text("game.character.label", character_name=self._character_name),
-                self._font_menu,
-                (198, 210, 228),
-                150,
-            )
-        if self._mode == "game":
-            self._draw_text(
-                text("game.hint.running"),
-                self._font_hint,
-                (160, 172, 190),
-                315,
-            )
+        self._game_view.render(
+            character_name=self._character_name,
+            show_running_hint=self._mode == "game",
+        )
+
+    def _render_game_context_menu(self) -> None:
+        pygame = self._pygame
+        modal_rect = self._draw_modal_shell("")
+        self._context_menu_hitboxes = {}
+        button_width = modal_rect.width - 120
+        button_height = 36
+        button_x = modal_rect.left + 60
+        buttons = [
+            ("resume", text("game.context_menu.option.resume"), (76, 128, 92)),
+            ("to_menu", text("game.context_menu.option.main_menu"), (80, 112, 144)),
+            ("exit", text("game.context_menu.option.exit_game"), (132, 76, 76)),
+        ]
+        for index, (action, label, fill_color) in enumerate(buttons):
+            y = modal_rect.top + 72 + index * 48
+            button_rect = pygame.Rect(button_x, y, button_width, button_height)
+            pygame.draw.rect(self._screen, fill_color, button_rect, border_radius=6)
+            pygame.draw.rect(self._screen, (128, 138, 158), button_rect, 2, border_radius=6)
+            self._draw_text_in_rect(label, self._font_hint, (238, 239, 243), button_rect)
+            self._context_menu_hitboxes[action] = button_rect
 
     def _render_name_modal(self) -> None:
         pygame = self._pygame
@@ -203,13 +226,6 @@ class PygameMainMenuView:
         pygame.draw.rect(self._screen, (128, 138, 158), ok_rect, 2, border_radius=6)
         self._draw_text_in_rect(text("modal.button.ok"), self._font_hint, (238, 239, 243), ok_rect)
         self._modal_ok_hitbox = ok_rect
-
-        self._draw_text(
-            text("modal.new_character.confirm_hint"),
-            self._font_hint,
-            (160, 172, 190),
-            modal_rect.bottom - 18,
-        )
 
     def _render_welcome_modal(self) -> None:
         pygame = self._pygame
@@ -299,7 +315,11 @@ class PygameMainMenuView:
         overlay.fill((5, 8, 14, 176))
         self._screen.blit(overlay, (0, 0))
 
-        modal_rect = pygame.Rect(120, 88, 480, 248)
+        modal_width, modal_height = _MODAL_SHELL_SIZE
+        screen_width, screen_height = self._screen.get_size()
+        modal_left = max(0, (screen_width - modal_width) // 2)
+        modal_top = max(0, (screen_height - modal_height) // 2)
+        modal_rect = pygame.Rect(modal_left, modal_top, modal_width, modal_height)
         pygame.draw.rect(self._screen, (24, 30, 43), modal_rect, border_radius=10)
         pygame.draw.rect(self._screen, (97, 112, 138), modal_rect, 2, border_radius=10)
         if title:
@@ -324,9 +344,44 @@ class PygameMainMenuView:
             else:
                 self._last_hint = text("main_menu.hint.invalid_choice_keys")
 
-    def _handle_game_event(self, pygame_event: Any, events: list[UIEvent]) -> None:
+    def _handle_game_event(self, pygame_event: Any, _events: list[UIEvent]) -> None:
         pygame = self._pygame
         if pygame_event.type == pygame.KEYDOWN and pygame_event.key == pygame.K_ESCAPE:
+            self._open_game_context_menu()
+
+    def _handle_game_context_menu_event(self, pygame_event: Any, events: list[UIEvent]) -> None:
+        pygame = self._pygame
+        if pygame_event.type == pygame.MOUSEBUTTONDOWN and pygame_event.button == 1:
+            for action, hitbox in self._context_menu_hitboxes.items():
+                if hitbox.collidepoint(pygame_event.pos):
+                    self._handle_context_menu_action(action, events)
+                    break
+            return
+
+        if pygame_event.type != pygame.KEYDOWN:
+            return
+
+        if pygame_event.key == pygame.K_ESCAPE:
+            self._close_game_context_menu()
+            return
+
+        if pygame_event.key in (pygame.K_1, pygame.K_KP1):
+            self._handle_context_menu_action("resume", events)
+            return
+
+        if pygame_event.key in (pygame.K_2, pygame.K_KP2):
+            self._handle_context_menu_action("to_menu", events)
+            return
+
+        if pygame_event.key in (pygame.K_3, pygame.K_KP3):
+            self._handle_context_menu_action("exit", events)
+
+    def _handle_context_menu_action(self, action: str, events: list[UIEvent]) -> None:
+        if action == "resume":
+            self._close_game_context_menu()
+        elif action == "to_menu":
+            self._return_to_main_menu()
+        elif action == "exit":
             events.append(ExitRequested())
 
     def _handle_name_modal_event(self, pygame_event: Any, events: list[UIEvent]) -> None:
@@ -382,7 +437,21 @@ class PygameMainMenuView:
 
     def _enter_game(self) -> None:
         self._modal_ok_hitbox = None
+        self._context_menu_hitboxes = {}
         self._mode = "game"
+
+    def _open_game_context_menu(self) -> None:
+        self._context_menu_hitboxes = {}
+        self._mode = "game_context_menu"
+
+    def _close_game_context_menu(self) -> None:
+        self._context_menu_hitboxes = {}
+        self._mode = "game"
+
+    def _return_to_main_menu(self) -> None:
+        self._context_menu_hitboxes = {}
+        self._modal_ok_hitbox = None
+        self._mode = "menu"
 
     def _has_valid_character_name(self) -> bool:
         return bool(self._character_name_input.strip())

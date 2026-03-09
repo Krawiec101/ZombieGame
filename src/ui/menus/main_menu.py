@@ -3,10 +3,10 @@ from __future__ import annotations
 import os
 
 try:
-    from ui.console_main_menu_view import ConsoleMainMenuView
+    from ui.menus.console_main_menu_view import ConsoleMainMenuView
     from contracts.main_menu_view import MainMenuView
 except ModuleNotFoundError:
-    from src.ui.console_main_menu_view import ConsoleMainMenuView
+    from src.ui.menus.console_main_menu_view import ConsoleMainMenuView
     from src.contracts.main_menu_view import MainMenuView
 
 
@@ -19,9 +19,9 @@ def create_view() -> MainMenuView:
 
     try:
         try:
-            from ui.pygame_main_menu_view import PygameMainMenuView
+            from ui.menus.pygame_main_menu_view import PygameMainMenuView
         except ModuleNotFoundError:
-            from src.ui.pygame_main_menu_view import PygameMainMenuView
+            from src.ui.menus.pygame_main_menu_view import PygameMainMenuView
 
         return PygameMainMenuView()
     except ImportError:
