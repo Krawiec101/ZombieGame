@@ -8,7 +8,7 @@ try:
     )
     from contracts.main_menu_view import MainMenuView
     from core.main_menu import handle_main_menu_ui_event
-    from ui.main_menu import create_view
+    from ui.menus.main_menu import create_view
 except ModuleNotFoundError:
     from src.contracts.events import (
         DomainEvent,
@@ -17,7 +17,7 @@ except ModuleNotFoundError:
     )
     from src.contracts.main_menu_view import MainMenuView
     from src.core.main_menu import handle_main_menu_ui_event
-    from src.ui.main_menu import create_view
+    from src.ui.menus.main_menu import create_view
 
 
 def route_domain_event(event: DomainEvent) -> bool:

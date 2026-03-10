@@ -73,6 +73,7 @@ If a refactor changes responsibility boundaries, dependencies, or communication 
 - every business logic change should include tests or preserve existing tests
 - prefer stable tests that are resilient to small implementation changes
 - avoid brittle tests that depend on rendering details or internal call ordering unless that behavior is the actual requirement
+- Maintain test coverage above 95%.
 
 ### What to test
 Prefer testing:

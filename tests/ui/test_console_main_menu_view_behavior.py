@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
-import ui.console_main_menu_view as console_view_module
+import ui.menus.console_main_menu_view as console_view_module
 from contracts.events import (
     DomainEvent,
     ExitFlowRouted,

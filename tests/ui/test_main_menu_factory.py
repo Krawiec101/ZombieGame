@@ -6,7 +6,7 @@ from types import ModuleType
 
 import pytest
 
-from ui import main_menu as main_menu_module
+from ui.menus import main_menu as main_menu_module
 
 
 class DummyConsoleView:
@@ -30,9 +30,9 @@ def test_create_view_uses_pygame_view_when_available(monkeypatch: pytest.MonkeyP
     monkeypatch.delenv("GAME_USE_CONSOLE_MENU", raising=False)
     monkeypatch.setattr(main_menu_module, "ConsoleMainMenuView", DummyConsoleView)
 
-    fake_pygame_module = ModuleType("ui.pygame_main_menu_view")
+    fake_pygame_module = ModuleType("ui.menus.pygame_main_menu_view")
     fake_pygame_module.PygameMainMenuView = DummyPygameView
-    monkeypatch.setitem(sys.modules, "ui.pygame_main_menu_view", fake_pygame_module)
+    monkeypatch.setitem(sys.modules, "ui.menus.pygame_main_menu_view", fake_pygame_module)
 
     view = main_menu_module.create_view()
 
@@ -54,7 +54,7 @@ def test_create_view_falls_back_to_console_when_pygame_import_fails(
         fromlist: tuple[str, ...] = (),
         level: int = 0,
     ) -> object:
-        if name in {"ui.pygame_main_menu_view", "src.ui.pygame_main_menu_view"}:
+        if name in {"ui.menus.pygame_main_menu_view", "src.ui.menus.pygame_main_menu_view"}:
             raise ImportError("pygame unavailable")
         return original_import(name, globals_, locals_, fromlist, level)
 
@@ -75,9 +75,9 @@ def test_create_view_falls_back_to_console_when_pygame_view_init_raises(
         def __init__(self) -> None:
             raise RuntimeError("unexpected init failure")
 
-    fake_pygame_module = ModuleType("ui.pygame_main_menu_view")
+    fake_pygame_module = ModuleType("ui.menus.pygame_main_menu_view")
     fake_pygame_module.PygameMainMenuView = RaisingPygameView
-    monkeypatch.setitem(sys.modules, "ui.pygame_main_menu_view", fake_pygame_module)
+    monkeypatch.setitem(sys.modules, "ui.menus.pygame_main_menu_view", fake_pygame_module)
 
     view = main_menu_module.create_view()
 
