@@ -5,12 +5,12 @@ from typing import Any
 
 try:
     from ui.i18n import text
+    from ui.game_views.units import UnitState, create_unit_state
 except ModuleNotFoundError:
     from src.ui.i18n import text
+    from src.ui.game_views.units import UnitState, create_unit_state
 
-_UNIT_SIZE = 18
 _MAP_WIDTH_KM = 20.0
-_INFANTRY_SPEED_KMPH = 4.2
 _SIMULATION_SECONDS_PER_FRAME = 8.0
 
 
@@ -31,10 +31,9 @@ class PygameGameView:
         self._font_hint = font_hint
         self._map_objects: list[dict[str, Any]] = []
         self._map_rect: Any | None = None
-        self._unit_selected = False
-        self._unit_position = (0.0, 0.0)
-        self._unit_target: tuple[float, float] | None = None
-        self._unit_initialized = False
+        self._units: list[UnitState] = []
+        self._selected_unit_id: str | None = None
+        self._units_initialized = False
 
     def render(self, *, character_name: str, show_running_hint: bool) -> None:
         _ = (character_name, show_running_hint)
@@ -42,11 +41,11 @@ class PygameGameView:
         map_rect = self._draw_map_area()
         self._map_rect = map_rect
         self._map_objects = self._build_map_objects(map_rect)
-        if not self._unit_initialized:
-            self._initialize_unit_position(self._map_objects)
-        self._update_unit_position()
+        if not self._units_initialized:
+            self._initialize_units(self._map_objects)
+        self._update_units_position()
         self._draw_map_objects(self._map_objects)
-        self._draw_unit()
+        self._draw_units()
 
         hovered_object = self._find_hovered_map_object(self._map_objects)
         if hovered_object:
@@ -57,27 +56,30 @@ class PygameGameView:
             )
 
     def handle_left_click(self, position: tuple[int, int]) -> None:
-        if self._map_rect is None or not self._unit_initialized:
+        if self._map_rect is None or not self._units_initialized:
             return
 
         if not self._map_rect.collidepoint(position):
             return
 
-        unit_rect = self._get_unit_rect()
-        if unit_rect.collidepoint(position):
-            self._unit_selected = True
+        clicked_unit = self._find_unit_at(position)
+        if clicked_unit is not None:
+            self._selected_unit_id = clicked_unit.unit_id
             return
 
-        if not self._unit_selected:
+        selected_unit = self._get_selected_unit()
+        if selected_unit is None:
             return
 
-        self._unit_target = self._clamp_point_to_map(position)
+        selected_unit.target = self._clamp_point_to_map(position, unit=selected_unit)
 
     def handle_right_click(self, position: tuple[int, int]) -> None:
         _ = position
-        if self._map_rect is None or not self._unit_initialized or not self._unit_selected:
+        if self._map_rect is None or not self._units_initialized:
             return
-        self._unit_selected = False
+        if self._get_selected_unit() is None:
+            return
+        self._selected_unit_id = None
 
     def _draw_text(
         self,
@@ -151,78 +153,119 @@ class PygameGameView:
             pygame.draw.rect(self._screen, fill_color, object_rect, border_radius=8)
             pygame.draw.rect(self._screen, (184, 200, 215), object_rect, 2, border_radius=8)
 
-    def _initialize_unit_position(self, map_objects: list[dict[str, Any]]) -> None:
+    def _initialize_units(self, map_objects: list[dict[str, Any]]) -> None:
         hq = next((map_object for map_object in map_objects if map_object["id"] == "hq"), None)
         if hq is None:
             return
 
         hq_rect = hq["rect"]
-        self._unit_position = (
+        hq_center = (
             float(hq_rect.left + hq_rect.width // 2),
             float(hq_rect.top + hq_rect.height // 2),
         )
-        self._unit_initialized = True
+        self._units = [
+            create_unit_state(
+                unit_id="alpha_infantry",
+                unit_type_id="infantry_squad",
+                position=(hq_center[0] - 22.0, hq_center[1] + 8.0),
+            ),
+            create_unit_state(
+                unit_id="bravo_motorized",
+                unit_type_id="motorized_infantry_squad",
+                position=(hq_center[0] + 26.0, hq_center[1] + 8.0),
+            ),
+        ]
+        for unit in self._units:
+            unit.position = self._clamp_point_to_map(unit.position, unit=unit)
+        self._units_initialized = True
 
-    def _draw_unit(self) -> None:
+    def _draw_units(self) -> None:
         pygame = self._pygame
-        unit_rect = self._get_unit_rect()
-        unit_fill = (226, 202, 114) if self._unit_selected else (208, 186, 104)
-        pygame.draw.rect(self._screen, unit_fill, unit_rect, border_radius=5)
-        pygame.draw.rect(self._screen, (78, 66, 28), unit_rect, 2, border_radius=5)
-        if self._unit_selected:
-            selection_rect = pygame.Rect(
-                unit_rect.left - 4,
-                unit_rect.top - 4,
-                unit_rect.width + 8,
-                unit_rect.height + 8,
+        for unit in self._units:
+            unit_rect = self._get_unit_rect(unit)
+            pygame.draw.rect(
+                self._screen,
+                unit.unit_type.marker_color,
+                unit_rect,
+                border_radius=5,
             )
-            pygame.draw.rect(self._screen, (234, 224, 170), selection_rect, 2, border_radius=7)
+            selection_rect = pygame.Rect(
+                unit_rect.left - 1,
+                unit_rect.top - 1,
+                unit_rect.width + 2,
+                unit_rect.height + 2,
+            )
+            pygame.draw.rect(
+                self._screen,
+                unit.unit_type.marker_border_color,
+                selection_rect,
+                2,
+                border_radius=6,
+            )
+            if unit.unit_id == self._selected_unit_id:
+                selected_rect = pygame.Rect(
+                    unit_rect.left - 5,
+                    unit_rect.top - 5,
+                    unit_rect.width + 10,
+                    unit_rect.height + 10,
+                )
+                pygame.draw.rect(self._screen, (234, 224, 170), selected_rect, 2, border_radius=8)
 
-    def _get_unit_rect(self) -> Any:
+    def _get_unit_rect(self, unit: UnitState | None = None) -> Any:
         pygame = self._pygame
-        unit_left = int(self._unit_position[0] - _UNIT_SIZE / 2)
-        unit_top = int(self._unit_position[1] - _UNIT_SIZE / 2)
-        return pygame.Rect(unit_left, unit_top, _UNIT_SIZE, _UNIT_SIZE)
+        active_unit = unit if unit is not None else (self._units[0] if self._units else None)
+        if active_unit is None:
+            return pygame.Rect(0, 0, 18, 18)
+        size = active_unit.unit_type.marker_size_px
+        unit_left = int(active_unit.position[0] - size / 2)
+        unit_top = int(active_unit.position[1] - size / 2)
+        return pygame.Rect(unit_left, unit_top, size, size)
 
-    def _update_unit_position(self) -> None:
-        if self._unit_target is None:
-            return
+    def _update_units_position(self) -> None:
+        for unit in self._units:
+            if unit.target is None:
+                continue
 
-        pixels_per_frame = self._movement_pixels_per_frame()
-        if pixels_per_frame <= 0:
-            return
+            pixels_per_frame = self._movement_pixels_per_frame(unit.unit_type.speed_kmph)
+            if pixels_per_frame <= 0:
+                continue
 
-        current_x, current_y = self._unit_position
-        target_x, target_y = self._unit_target
-        delta_x = target_x - current_x
-        delta_y = target_y - current_y
-        distance = math.hypot(delta_x, delta_y)
+            current_x, current_y = unit.position
+            target_x, target_y = unit.target
+            delta_x = target_x - current_x
+            delta_y = target_y - current_y
+            distance = math.hypot(delta_x, delta_y)
 
-        if distance <= pixels_per_frame:
-            self._unit_position = self._unit_target
-            self._unit_target = None
-            return
+            if distance <= pixels_per_frame:
+                unit.position = unit.target
+                unit.target = None
+                continue
 
-        step = pixels_per_frame / distance
-        moved_x = current_x + delta_x * step
-        moved_y = current_y + delta_y * step
-        self._unit_position = self._clamp_point_to_map((moved_x, moved_y))
+            step = pixels_per_frame / distance
+            moved_x = current_x + delta_x * step
+            moved_y = current_y + delta_y * step
+            unit.position = self._clamp_point_to_map((moved_x, moved_y), unit=unit)
 
-    def _movement_pixels_per_frame(self) -> float:
+    def _movement_pixels_per_frame(self, speed_kmph: float) -> float:
         if self._map_rect is None or self._map_rect.width <= 0:
             return 0.0
 
-        km_per_frame = (_INFANTRY_SPEED_KMPH / 3600.0) * _SIMULATION_SECONDS_PER_FRAME
+        km_per_frame = (speed_kmph / 3600.0) * _SIMULATION_SECONDS_PER_FRAME
         km_per_pixel = _MAP_WIDTH_KM / float(self._map_rect.width)
         if km_per_pixel <= 0:
             return 0.0
         return km_per_frame / km_per_pixel
 
-    def _clamp_point_to_map(self, position: tuple[float, float] | tuple[int, int]) -> tuple[float, float]:
+    def _clamp_point_to_map(
+        self,
+        position: tuple[float, float] | tuple[int, int],
+        *,
+        unit: UnitState,
+    ) -> tuple[float, float]:
         if self._map_rect is None:
             return (float(position[0]), float(position[1]))
 
-        half_size = _UNIT_SIZE / 2
+        half_size = unit.unit_type.marker_size_px / 2
         min_x = self._map_rect.left + half_size
         max_x = self._map_rect.right - half_size
         min_y = self._map_rect.top + half_size
@@ -230,6 +273,21 @@ class PygameGameView:
         clamped_x = min(max(float(position[0]), min_x), max_x)
         clamped_y = min(max(float(position[1]), min_y), max_y)
         return (clamped_x, clamped_y)
+
+    def _find_unit_at(self, position: tuple[int, int]) -> UnitState | None:
+        for unit in reversed(self._units):
+            if self._get_unit_rect(unit).collidepoint(position):
+                return unit
+        return None
+
+    def _get_selected_unit(self) -> UnitState | None:
+        if self._selected_unit_id is None:
+            return None
+        for unit in self._units:
+            if unit.unit_id == self._selected_unit_id:
+                return unit
+        self._selected_unit_id = None
+        return None
 
     def _find_hovered_map_object(self, map_objects: list[dict[str, Any]]) -> dict[str, Any] | None:
         mouse_x, mouse_y = self._get_mouse_position()

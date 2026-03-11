@@ -103,6 +103,14 @@ def _blitted_texts(screen: _FakeScreen) -> list[str]:
     ]
 
 
+def _unit_by_id(view: game_view_module.PygameGameView, unit_id: str):
+    return next(unit for unit in view._units if unit.unit_id == unit_id)
+
+
+def _unit_by_type(view: game_view_module.PygameGameView, unit_type_id: str):
+    return next(unit for unit in view._units if unit.unit_type.type_id == unit_type_id)
+
+
 @pytest.fixture
 def game_view(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(game_view_module, "text", lambda key, **kwargs: key)
@@ -123,6 +131,13 @@ def test_render_builds_two_map_objects(game_view) -> None:
 
     object_ids = {map_object["id"] for map_object in game_view.view._map_objects}
     assert object_ids == {"hq", "landing_pad"}
+
+
+def test_render_initializes_two_unit_classes(game_view) -> None:
+    game_view.view.render(character_name="", show_running_hint=False)
+
+    unit_type_ids = {unit.unit_type.type_id for unit in game_view.view._units}
+    assert unit_type_ids == {"infantry_squad", "motorized_infantry_squad"}
 
 
 def test_render_uses_fullscreen_map_area(game_view) -> None:
@@ -170,95 +185,116 @@ def test_render_hides_tooltip_when_mouse_is_outside_objects(game_view) -> None:
 
 def test_left_click_selects_unit(game_view) -> None:
     game_view.view.render(character_name="", show_running_hint=False)
-    unit_rect = game_view.view._get_unit_rect()
+    unit = _unit_by_id(game_view.view, "alpha_infantry")
+    unit_rect = game_view.view._get_unit_rect(unit)
     click_pos = (unit_rect.left + 2, unit_rect.top + 2)
 
     game_view.view.handle_left_click(click_pos)
-    assert game_view.view._unit_selected is True
+    assert game_view.view._selected_unit_id == unit.unit_id
 
-    game_view.view.handle_left_click(click_pos)
-    assert game_view.view._unit_selected is True
+    other_unit = _unit_by_id(game_view.view, "bravo_motorized")
+    other_rect = game_view.view._get_unit_rect(other_unit)
+    game_view.view.handle_left_click((other_rect.left + 2, other_rect.top + 2))
+    assert game_view.view._selected_unit_id == other_unit.unit_id
 
 
 def test_left_click_on_empty_map_issues_move_order_when_selected(game_view) -> None:
     game_view.view.render(character_name="", show_running_hint=False)
-    unit_rect = game_view.view._get_unit_rect()
+    unit = _unit_by_id(game_view.view, "alpha_infantry")
+    unit_rect = game_view.view._get_unit_rect(unit)
     game_view.view.handle_left_click((unit_rect.left + 2, unit_rect.top + 2))
-    assert game_view.view._unit_selected is True
+    assert game_view.view._selected_unit_id == unit.unit_id
 
     target = (840, 500)
-    expected_target = game_view.view._clamp_point_to_map(target)
+    expected_target = game_view.view._clamp_point_to_map(target, unit=unit)
     game_view.view.handle_left_click(target)
 
-    assert game_view.view._unit_selected is True
-    assert game_view.view._unit_target == expected_target
+    assert game_view.view._selected_unit_id == unit.unit_id
+    assert unit.target == expected_target
 
 
 def test_right_click_deselects_selected_unit_without_clearing_target(game_view) -> None:
     game_view.view.render(character_name="", show_running_hint=False)
-    unit_rect = game_view.view._get_unit_rect()
+    unit = _unit_by_id(game_view.view, "alpha_infantry")
+    unit_rect = game_view.view._get_unit_rect(unit)
     game_view.view.handle_left_click((unit_rect.left + 2, unit_rect.top + 2))
     game_view.view.handle_left_click((840, 500))
-    target_before_deselect = game_view.view._unit_target
+    target_before_deselect = unit.target
     assert target_before_deselect is not None
 
     game_view.view.handle_right_click((840, 500))
 
-    assert game_view.view._unit_selected is False
-    assert game_view.view._unit_target == target_before_deselect
+    assert game_view.view._selected_unit_id is None
+    assert unit.target == target_before_deselect
 
     for _ in range(3000):
         game_view.view.render(character_name="", show_running_hint=False)
-        if game_view.view._unit_target is None:
+        if unit.target is None:
             break
 
-    assert game_view.view._unit_target is None
+    assert unit.target is None
 
 
 def test_left_click_without_selection_does_not_issue_move_order(game_view) -> None:
     game_view.view.render(character_name="", show_running_hint=False)
-    start_position = game_view.view._unit_position
+    unit = _unit_by_id(game_view.view, "alpha_infantry")
+    start_position = unit.position
 
     game_view.view.handle_left_click((840, 500))
     for _ in range(60):
         game_view.view.render(character_name="", show_running_hint=False)
 
-    assert game_view.view._unit_target is None
-    assert game_view.view._unit_position == start_position
+    assert unit.target is None
+    assert unit.position == start_position
 
 
 def test_left_click_move_order_reaches_target(game_view) -> None:
     game_view.view.render(character_name="", show_running_hint=False)
-    unit_rect = game_view.view._get_unit_rect()
+    unit = _unit_by_id(game_view.view, "alpha_infantry")
+    unit_rect = game_view.view._get_unit_rect(unit)
     game_view.view.handle_left_click((unit_rect.left + 2, unit_rect.top + 2))
 
     target = (840, 500)
-    expected_target = game_view.view._clamp_point_to_map(target)
+    expected_target = game_view.view._clamp_point_to_map(target, unit=unit)
     game_view.view.handle_left_click(target)
 
     for _ in range(3000):
         game_view.view.render(character_name="", show_running_hint=False)
-        if game_view.view._unit_target is None:
+        if unit.target is None:
             break
 
-    assert game_view.view._unit_target is None
-    assert game_view.view._unit_position == expected_target
+    assert unit.target is None
+    assert unit.position == expected_target
 
 
 def test_left_click_move_order_uses_strategic_speed_profile(game_view) -> None:
     game_view.view.render(character_name="", show_running_hint=False)
-    unit_rect = game_view.view._get_unit_rect()
-    game_view.view.handle_left_click((unit_rect.left + 2, unit_rect.top + 2))
-    start_position = game_view.view._unit_position
-    game_view.view.handle_left_click((840, 500))
+    infantry = _unit_by_type(game_view.view, "infantry_squad")
+    motorized = _unit_by_type(game_view.view, "motorized_infantry_squad")
+
+    infantry_rect = game_view.view._get_unit_rect(infantry)
+    motorized_rect = game_view.view._get_unit_rect(motorized)
+    target = (40, 40)
+
+    game_view.view.handle_left_click((infantry_rect.left + 2, infantry_rect.top + 2))
+    game_view.view.handle_left_click(target)
+    game_view.view.handle_left_click((motorized_rect.left + 2, motorized_rect.top + 2))
+    game_view.view.handle_left_click(target)
+
+    infantry_start_position = infantry.position
+    motorized_start_position = motorized.position
 
     for _ in range(120):
         game_view.view.render(character_name="", show_running_hint=False)
 
-    current_position = game_view.view._unit_position
-    moved_distance = math.hypot(
-        current_position[0] - start_position[0],
-        current_position[1] - start_position[1],
+    infantry_moved_distance = math.hypot(
+        infantry.position[0] - infantry_start_position[0],
+        infantry.position[1] - infantry_start_position[1],
     )
-    assert moved_distance < 100.0
-    assert game_view.view._unit_target is not None
+    motorized_moved_distance = math.hypot(
+        motorized.position[0] - motorized_start_position[0],
+        motorized.position[1] - motorized_start_position[1],
+    )
+
+    assert infantry_moved_distance < 100.0
+    assert motorized_moved_distance > infantry_moved_distance * 2
