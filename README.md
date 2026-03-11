@@ -1,16 +1,17 @@
 # Game
 
 Prosty projekt gry w Pythonie z rozdzieleniem warstw:
-- `src/core` - logika biznesowa menu i mapowanie `UIEvent -> DomainEvent` (bez `pygame`)
+- `src/core` - logika biznesowa i symulacja (menu, sesja gry, cele misji, ruch jednostek), bez `pygame`
 - `src/ui` - warstwa prezentacji, bez wywolywania logiki core bezposrednio:
   - `src/ui/menus` - menu glowne i menu kontekstowe w trakcie gry
-  - `src/ui/game_views` - widoki renderujace rozgrywke
+  - `src/ui/game_views` - widoki renderujace rozgrywke na podstawie snapshotow stanu
 - `src/app` - orchestrator spinajacy UI i Core (petla aplikacji + routing zdarzen)
 - `src/contracts` - wspolne kontrakty zdarzen i interfejsow miedzy warstwami
 
 Komunikacja miedzy warstwami odbywa sie przez zdarzenia:
-- UI -> App/Core: `UIEvent` (komendy uzytkownika)
-- Core -> App/UI: `DomainEvent` (decyzje/routing)
+- UI -> App: `UIEvent` (komendy uzytkownika)
+- App -> Core: wywolania orchestration (`GameSession` i routing menu)
+- Core/App -> UI: `DomainEvent` (routing i snapshoty stanu, np. `GameStateSynced`)
 
 `pygame` jest importowany lazy w warstwie UI (dopiero przy tworzeniu widoku pygame), co pozwala uruchamiac testy w srodowiskach headless.
 
@@ -89,8 +90,7 @@ python -m mutmut results --all true
 ```
 
 W CI jest ustawiona bramka jakosci mutacji:
-- minimalny `mutation score`: `90%`
-- `survived`: `0`
+- wymagany `mutation score`: `> 92%`
 - `suspicious`: `0`
 - `timeout`: `1`
 

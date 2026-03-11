@@ -7,6 +7,10 @@ try:
         DomainEvent,
         ExitFlowRouted,
         ExitRequested,
+        GameFrameSyncRequested,
+        GameLeftClickRequested,
+        GameRightClickRequested,
+        GameStateSynced,
         LoadGameFlowRouted,
         LoadGameRequested,
         NewGameFlowRouted,
@@ -20,6 +24,10 @@ except ModuleNotFoundError:
         DomainEvent,
         ExitFlowRouted,
         ExitRequested,
+        GameFrameSyncRequested,
+        GameLeftClickRequested,
+        GameRightClickRequested,
+        GameStateSynced,
         LoadGameFlowRouted,
         LoadGameRequested,
         NewGameFlowRouted,
@@ -110,17 +118,30 @@ class PygameMainMenuView:
             elif self._mode == "game_context_menu":
                 self._handle_game_context_menu_event(pygame_event, events)
 
+        if self._mode in {"game", "game_context_menu"}:
+            width, height = self._screen.get_size()
+            events.append(GameFrameSyncRequested(width=width, height=height))
+
         self._clock.tick(60)
         return events
 
     def handle_domain_event(self, event: DomainEvent) -> None:
         if isinstance(event, NewGameFlowRouted):
+            self._game_view.clear_game_state()
             self._character_name = ""
             self._character_name_input = ""
             self._modal_ok_hitbox = None
             self._context_menu_hitboxes = {}
             self._last_hint = None
             self._mode = "name_modal"
+        elif isinstance(event, GameStateSynced):
+            self._game_view.apply_game_state(
+                map_objects=event.map_objects,
+                units=event.units,
+                selected_unit_id=event.selected_unit_id,
+                objective_definitions=event.objective_definitions,
+                objective_status=event.objective_status,
+            )
         elif isinstance(event, LoadGameFlowRouted):
             self._last_hint = text("flow.load_game.stub")
         elif isinstance(event, ExitFlowRouted):
@@ -344,14 +365,14 @@ class PygameMainMenuView:
             else:
                 self._last_hint = text("main_menu.hint.invalid_choice_keys")
 
-    def _handle_game_event(self, pygame_event: Any, _events: list[UIEvent]) -> None:
+    def _handle_game_event(self, pygame_event: Any, events: list[UIEvent]) -> None:
         pygame = self._pygame
         if pygame_event.type == pygame.MOUSEBUTTONDOWN:
             if pygame_event.button == 1:
-                self._game_view.handle_left_click(pygame_event.pos)
+                events.append(GameLeftClickRequested(position=pygame_event.pos))
                 return
             if pygame_event.button == 3:
-                self._game_view.handle_right_click(pygame_event.pos)
+                events.append(GameRightClickRequested(position=pygame_event.pos))
                 return
 
         if pygame_event.type == pygame.KEYDOWN and pygame_event.key == pygame.K_ESCAPE:

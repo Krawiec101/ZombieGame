@@ -70,3 +70,32 @@ def test_app_only_depends_on_app_core_ui_or_contracts_internally() -> None:
     Rule().modules_that().are_sub_modules_of(f"{prefix}.app").should_not().import_modules_that().have_name_matching(
         _module_alias_regex(*sorted(disallowed_internal_roots))
     ).assert_applies(_architecture(exclude_external_libraries=False))
+
+
+def test_mission_objectives_logic_lives_in_core_not_ui() -> None:
+    root_dir = Path(__file__).resolve().parents[2]
+    assert (root_dir / "src" / "core" / "mission_objectives.py").exists()
+    assert not (root_dir / "src" / "ui" / "game_views" / "mission_objectives.py").exists()
+
+
+def test_game_session_and_units_logic_lives_in_core_not_ui() -> None:
+    root_dir = Path(__file__).resolve().parents[2]
+    assert (root_dir / "src" / "core" / "game_session.py").exists()
+    assert not (root_dir / "src" / "ui" / "game_views" / "units.py").exists()
+
+
+def test_ui_game_view_is_state_driven_without_core_service_reference() -> None:
+    root_dir = Path(__file__).resolve().parents[2]
+    source = (root_dir / "src" / "ui" / "game_views" / "pygame_game_view.py").read_text(
+        encoding="utf-8"
+    )
+    assert "game_session" not in source
+
+
+def test_pygame_menu_view_emits_game_events_instead_of_service_calls() -> None:
+    root_dir = Path(__file__).resolve().parents[2]
+    source = (root_dir / "src" / "ui" / "menus" / "pygame_main_menu_view.py").read_text(
+        encoding="utf-8"
+    )
+    assert "handle_left_click(" not in source
+    assert "handle_right_click(" not in source
