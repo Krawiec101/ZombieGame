@@ -18,6 +18,13 @@ from contracts.events import (
     NewGameFlowRouted,
     NewGameRequested,
 )
+from contracts.game_state import (
+    GameStateSnapshot,
+    MapObjectSnapshot,
+    MissionObjectiveDefinitionSnapshot,
+    MissionObjectiveProgressSnapshot,
+    UnitSnapshot,
+)
 
 
 class _FakeClock:
@@ -508,35 +515,43 @@ def test_handle_domain_event_game_state_synced_updates_game_view_state(pygame_vi
     view, _fake_pygame = pygame_view
     captured: dict[str, object] = {}
 
-    def capture_apply_game_state(**state: object) -> None:
-        captured.update(state)
+    def capture_apply_game_state(*, snapshot: GameStateSnapshot) -> None:
+        captured["snapshot"] = snapshot
 
     view._game_view.apply_game_state = capture_apply_game_state
     event = GameStateSynced(
-        map_objects=({"id": "hq", "bounds": (1, 2, 3, 4)},),
-        units=(
-            {
-                "unit_id": "u1",
-                "unit_type_id": "infantry_squad",
-                "position": (10.0, 20.0),
-                "target": None,
-                "marker_size_px": 18,
-            },
+        snapshot=GameStateSnapshot(
+            map_objects=(MapObjectSnapshot(object_id="hq", bounds=(1, 2, 3, 4)),),
+            units=(
+                UnitSnapshot(
+                    unit_id="u1",
+                    unit_type_id="infantry_squad",
+                    position=(10.0, 20.0),
+                    target=None,
+                    marker_size_px=18,
+                ),
+            ),
+            selected_unit_id="u1",
+            objective_definitions=(
+                MissionObjectiveDefinitionSnapshot(
+                    objective_id="o1",
+                    description_key="objective.key",
+                ),
+            ),
+            objective_progress=(
+                MissionObjectiveProgressSnapshot(objective_id="o1", completed=True),
+            ),
         ),
-        selected_unit_id="u1",
-        objective_definitions=(
-            {
-                "objective_id": "o1",
-                "description_key": "objective.key",
-            },
-        ),
-        objective_status={"o1": True},
     )
 
     view.handle_domain_event(event)
 
-    assert captured["selected_unit_id"] == "u1"
-    assert captured["objective_status"] == {"o1": True}
+    snapshot = captured["snapshot"]
+    assert isinstance(snapshot, GameStateSnapshot)
+    assert snapshot.selected_unit_id == "u1"
+    assert snapshot.objective_progress == (
+        MissionObjectiveProgressSnapshot(objective_id="o1", completed=True),
+    )
 
 
 def test_close_is_idempotent(pygame_view) -> None:

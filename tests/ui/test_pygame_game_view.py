@@ -4,6 +4,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from contracts.game_state import (
+    GameStateSnapshot,
+    MapObjectSnapshot,
+    MissionObjectiveDefinitionSnapshot,
+    MissionObjectiveProgressSnapshot,
+    UnitSnapshot,
+)
 import ui.game_views.pygame_game_view as game_view_module
 
 
@@ -105,37 +112,42 @@ class _FakePygame:
         return _FakeRect(left, top, width, height)
 
 
-def _sample_game_state(*, objective_completed: bool = False) -> dict[str, object]:
-    return {
-        "map_objects": (
-            {"id": "hq", "bounds": (160, 200, 244, 256)},
-            {"id": "landing_pad", "bounds": (700, 170, 772, 218)},
+def _sample_game_state(*, objective_completed: bool = False) -> GameStateSnapshot:
+    return GameStateSnapshot(
+        map_objects=(
+            MapObjectSnapshot(object_id="hq", bounds=(160, 200, 244, 256)),
+            MapObjectSnapshot(object_id="landing_pad", bounds=(700, 170, 772, 218)),
         ),
-        "units": (
-            {
-                "unit_id": "alpha_infantry",
-                "unit_type_id": "infantry_squad",
-                "position": (210.0, 238.0),
-                "target": None,
-                "marker_size_px": 18,
-            },
-            {
-                "unit_id": "bravo_motorized",
-                "unit_type_id": "motorized_infantry_squad",
-                "position": (250.0, 238.0),
-                "target": None,
-                "marker_size_px": 20,
-            },
+        units=(
+            UnitSnapshot(
+                unit_id="alpha_infantry",
+                unit_type_id="infantry_squad",
+                position=(210.0, 238.0),
+                target=None,
+                marker_size_px=18,
+            ),
+            UnitSnapshot(
+                unit_id="bravo_motorized",
+                unit_type_id="motorized_infantry_squad",
+                position=(250.0, 238.0),
+                target=None,
+                marker_size_px=20,
+            ),
         ),
-        "selected_unit_id": "alpha_infantry",
-        "objective_definitions": (
-            {
-                "objective_id": "motorized_to_landing_pad",
-                "description_key": "mission.objective.motorized_to_landing_pad",
-            },
+        selected_unit_id="alpha_infantry",
+        objective_definitions=(
+            MissionObjectiveDefinitionSnapshot(
+                objective_id="motorized_to_landing_pad",
+                description_key="mission.objective.motorized_to_landing_pad",
+            ),
         ),
-        "objective_status": {"motorized_to_landing_pad": objective_completed},
-    }
+        objective_progress=(
+            MissionObjectiveProgressSnapshot(
+                objective_id="motorized_to_landing_pad",
+                completed=objective_completed,
+            ),
+        ),
+    )
 
 
 def _blitted_texts(screen: _FakeScreen) -> list[str]:
@@ -172,10 +184,10 @@ def test_render_uses_fullscreen_map_area(game_view) -> None:
 def test_apply_game_state_updates_cached_state(game_view) -> None:
     state = _sample_game_state()
 
-    game_view.view.apply_game_state(**state)
+    game_view.view.apply_game_state(snapshot=state)
 
-    assert {obj["id"] for obj in game_view.view._map_objects} == {"hq", "landing_pad"}
-    assert {unit["unit_type_id"] for unit in game_view.view._units} == {
+    assert {obj.object_id for obj in game_view.view._map_objects} == {"hq", "landing_pad"}
+    assert {unit.unit_type_id for unit in game_view.view._units} == {
         "infantry_squad",
         "motorized_infantry_squad",
     }
@@ -183,7 +195,7 @@ def test_apply_game_state_updates_cached_state(game_view) -> None:
 
 
 def test_render_draws_mission_objectives_panel(game_view) -> None:
-    game_view.view.apply_game_state(**_sample_game_state())
+    game_view.view.apply_game_state(snapshot=_sample_game_state())
     game_view.view.render(character_name="", show_running_hint=False)
 
     texts = _blitted_texts(game_view.screen)
@@ -192,7 +204,7 @@ def test_render_draws_mission_objectives_panel(game_view) -> None:
 
 
 def test_render_draws_strikethrough_for_completed_objective(game_view) -> None:
-    game_view.view.apply_game_state(**_sample_game_state(objective_completed=True))
+    game_view.view.apply_game_state(snapshot=_sample_game_state(objective_completed=True))
     game_view.view.render(character_name="", show_running_hint=False)
 
     texts = _blitted_texts(game_view.screen)
@@ -201,7 +213,7 @@ def test_render_draws_strikethrough_for_completed_objective(game_view) -> None:
 
 
 def test_render_shows_tooltip_for_hovered_object(game_view) -> None:
-    game_view.view.apply_game_state(**_sample_game_state())
+    game_view.view.apply_game_state(snapshot=_sample_game_state())
     game_view.pygame.mouse.position = (170, 210)
 
     game_view.view.render(character_name="", show_running_hint=False)
@@ -212,7 +224,7 @@ def test_render_shows_tooltip_for_hovered_object(game_view) -> None:
 
 
 def test_render_hides_tooltip_when_mouse_is_outside_objects(game_view) -> None:
-    game_view.view.apply_game_state(**_sample_game_state())
+    game_view.view.apply_game_state(snapshot=_sample_game_state())
     game_view.pygame.mouse.position = (8, 8)
 
     game_view.view.render(character_name="", show_running_hint=False)
@@ -223,7 +235,7 @@ def test_render_hides_tooltip_when_mouse_is_outside_objects(game_view) -> None:
 
 
 def test_clear_game_state_clears_cached_state(game_view) -> None:
-    game_view.view.apply_game_state(**_sample_game_state())
+    game_view.view.apply_game_state(snapshot=_sample_game_state())
     assert game_view.view._map_objects
 
     game_view.view.clear_game_state()

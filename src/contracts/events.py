@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from contracts.game_state import GameStateSnapshot
+
 
 @dataclass(frozen=True)
 class UIEvent:
@@ -61,11 +63,7 @@ class ExitFlowRouted(DomainEvent):
 
 @dataclass(frozen=True)
 class GameStateSynced(DomainEvent):
-    map_objects: tuple[dict[str, object], ...]
-    units: tuple[dict[str, object], ...]
-    selected_unit_id: str | None
-    objective_definitions: tuple[dict[str, str], ...]
-    objective_status: dict[str, bool]
+    snapshot: GameStateSnapshot
 
 
 @dataclass(frozen=True)

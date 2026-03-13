@@ -1,29 +1,16 @@
 from __future__ import annotations
 
-try:
-    from contracts.events import (
-        DomainEvent,
-        ExitFlowRouted,
-        ExitRequested,
-        LoadGameFlowRouted,
-        LoadGameRequested,
-        NewGameFlowRouted,
-        NewGameRequested,
-        UIEvent,
-        UIEventIgnored,
-    )
-except ModuleNotFoundError:
-    from src.contracts.events import (
-        DomainEvent,
-        ExitFlowRouted,
-        ExitRequested,
-        LoadGameFlowRouted,
-        LoadGameRequested,
-        NewGameFlowRouted,
-        NewGameRequested,
-        UIEvent,
-        UIEventIgnored,
-    )
+from contracts.events import (
+    DomainEvent,
+    ExitFlowRouted,
+    ExitRequested,
+    LoadGameFlowRouted,
+    LoadGameRequested,
+    NewGameFlowRouted,
+    NewGameRequested,
+    UIEvent,
+    UIEventIgnored,
+)
 
 
 def handle_main_menu_ui_event(event: UIEvent) -> DomainEvent:

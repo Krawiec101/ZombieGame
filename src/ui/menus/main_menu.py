@@ -2,12 +2,8 @@ from __future__ import annotations
 
 import os
 
-try:
-    from ui.menus.console_main_menu_view import ConsoleMainMenuView
-    from contracts.main_menu_view import MainMenuView
-except ModuleNotFoundError:
-    from src.ui.menus.console_main_menu_view import ConsoleMainMenuView
-    from src.contracts.main_menu_view import MainMenuView
+from contracts.main_menu_view import MainMenuView
+from ui.menus.console_main_menu_view import ConsoleMainMenuView
 
 
 _USE_CONSOLE_VALUES = {"1", "true", "yes", "on"}
@@ -18,11 +14,7 @@ def create_view() -> MainMenuView:
         return ConsoleMainMenuView()
 
     try:
-        try:
-            from ui.menus.pygame_main_menu_view import PygameMainMenuView
-        except ModuleNotFoundError:
-            from src.ui.menus.pygame_main_menu_view import PygameMainMenuView
-
+        from ui.menus.pygame_main_menu_view import PygameMainMenuView
         return PygameMainMenuView()
     except ImportError:
         return ConsoleMainMenuView()

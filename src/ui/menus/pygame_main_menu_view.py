@@ -2,40 +2,22 @@ from __future__ import annotations
 
 from typing import Any
 
-try:
-    from contracts.events import (
-        DomainEvent,
-        ExitFlowRouted,
-        ExitRequested,
-        GameFrameSyncRequested,
-        GameLeftClickRequested,
-        GameRightClickRequested,
-        GameStateSynced,
-        LoadGameFlowRouted,
-        LoadGameRequested,
-        NewGameFlowRouted,
-        NewGameRequested,
-        UIEvent,
-    )
-    from ui.i18n import text
-    from ui.game_views.pygame_game_view import PygameGameView
-except ModuleNotFoundError:
-    from src.contracts.events import (
-        DomainEvent,
-        ExitFlowRouted,
-        ExitRequested,
-        GameFrameSyncRequested,
-        GameLeftClickRequested,
-        GameRightClickRequested,
-        GameStateSynced,
-        LoadGameFlowRouted,
-        LoadGameRequested,
-        NewGameFlowRouted,
-        NewGameRequested,
-        UIEvent,
-    )
-    from src.ui.i18n import text
-    from src.ui.game_views.pygame_game_view import PygameGameView
+from contracts.events import (
+    DomainEvent,
+    ExitFlowRouted,
+    ExitRequested,
+    GameFrameSyncRequested,
+    GameLeftClickRequested,
+    GameRightClickRequested,
+    GameStateSynced,
+    LoadGameFlowRouted,
+    LoadGameRequested,
+    NewGameFlowRouted,
+    NewGameRequested,
+    UIEvent,
+)
+from ui.game_views.pygame_game_view import PygameGameView
+from ui.i18n import text
 
 
 _MENU_OPTION_LABEL_KEYS = {
@@ -135,13 +117,7 @@ class PygameMainMenuView:
             self._last_hint = None
             self._mode = "name_modal"
         elif isinstance(event, GameStateSynced):
-            self._game_view.apply_game_state(
-                map_objects=event.map_objects,
-                units=event.units,
-                selected_unit_id=event.selected_unit_id,
-                objective_definitions=event.objective_definitions,
-                objective_status=event.objective_status,
-            )
+            self._game_view.apply_game_state(snapshot=event.snapshot)
         elif isinstance(event, LoadGameFlowRouted):
             self._last_hint = text("flow.load_game.stub")
         elif isinstance(event, ExitFlowRouted):

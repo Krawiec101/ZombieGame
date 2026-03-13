@@ -1,29 +1,16 @@
 from __future__ import annotations
 
-try:
-    from contracts.events import (
-        DomainEvent,
-        ExitFlowRouted,
-        ExitRequested,
-        LoadGameFlowRouted,
-        LoadGameRequested,
-        NewGameFlowRouted,
-        NewGameRequested,
-        UIEvent,
-    )
-    from ui.i18n import text
-except ModuleNotFoundError:
-    from src.contracts.events import (
-        DomainEvent,
-        ExitFlowRouted,
-        ExitRequested,
-        LoadGameFlowRouted,
-        LoadGameRequested,
-        NewGameFlowRouted,
-        NewGameRequested,
-        UIEvent,
-    )
-    from src.ui.i18n import text
+from contracts.events import (
+    DomainEvent,
+    ExitFlowRouted,
+    ExitRequested,
+    LoadGameFlowRouted,
+    LoadGameRequested,
+    NewGameFlowRouted,
+    NewGameRequested,
+    UIEvent,
+)
+from ui.i18n import text
 
 
 _MENU_OPTION_LABEL_KEYS = {

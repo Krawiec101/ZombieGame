@@ -4,16 +4,17 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-try:
-    from core.mission_objectives import (
-        MissionObjectivesEvaluator,
-        create_default_mission_objectives_evaluator,
-    )
-except ModuleNotFoundError:
-    from src.core.mission_objectives import (
-        MissionObjectivesEvaluator,
-        create_default_mission_objectives_evaluator,
-    )
+from contracts.game_state import (
+    GameStateSnapshot,
+    MapObjectSnapshot,
+    MissionObjectiveDefinitionSnapshot,
+    MissionObjectiveProgressSnapshot,
+    UnitSnapshot,
+)
+from core.mission_objectives import (
+    MissionObjectivesEvaluator,
+    create_default_mission_objectives_evaluator,
+)
 
 _MAP_WIDTH_KM = 20.0
 _SIMULATION_SECONDS_PER_TICK = 8.0
@@ -101,6 +102,11 @@ class GameSession:
             current_status=self._objective_status,
         )
 
+    def sync_state(self, *, width: int, height: int) -> GameStateSnapshot:
+        self.update_map_dimensions(width=width, height=height)
+        self.tick()
+        return self.snapshot()
+
     def handle_left_click(self, position: tuple[int, int]) -> None:
         if not self._point_in_map(position):
             return
@@ -142,8 +148,44 @@ class GameSession:
     def objective_definitions_snapshot(self) -> tuple[dict[str, str], ...]:
         return self._objective_definitions
 
+    def objective_progress_snapshot(self) -> tuple[MissionObjectiveProgressSnapshot, ...]:
+        return tuple(
+            MissionObjectiveProgressSnapshot(
+                objective_id=objective_id,
+                completed=completed,
+            )
+            for objective_id, completed in self._objective_status.items()
+        )
+
     def selected_unit_id(self) -> str | None:
         return self._selected_unit_id
+
+    def snapshot(self) -> GameStateSnapshot:
+        return GameStateSnapshot(
+            map_objects=tuple(
+                MapObjectSnapshot(object_id=obj["id"], bounds=obj["bounds"])
+                for obj in self.map_objects_snapshot()
+            ),
+            units=tuple(
+                UnitSnapshot(
+                    unit_id=unit["unit_id"],
+                    unit_type_id=unit["unit_type_id"],
+                    position=unit["position"],
+                    target=unit["target"],
+                    marker_size_px=unit["marker_size_px"],
+                )
+                for unit in self.units_snapshot()
+            ),
+            selected_unit_id=self.selected_unit_id(),
+            objective_definitions=tuple(
+                MissionObjectiveDefinitionSnapshot(
+                    objective_id=definition["objective_id"],
+                    description_key=definition["description_key"],
+                )
+                for definition in self.objective_definitions_snapshot()
+            ),
+            objective_progress=self.objective_progress_snapshot(),
+        )
 
     def _build_map_objects(self, width: int, height: int) -> list[dict[str, Any]]:
         objects: list[dict[str, Any]] = []

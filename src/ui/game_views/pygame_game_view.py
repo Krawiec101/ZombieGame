@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-try:
-    from ui.i18n import text
-except ModuleNotFoundError:
-    from src.ui.i18n import text
+from contracts.game_state import (
+    GameStateSnapshot,
+    MapObjectSnapshot,
+    MissionObjectiveDefinitionSnapshot,
+    UnitSnapshot,
+)
+from ui.i18n import text
 
 _MAP_OBJECT_STYLES: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
     "hq": ((76, 116, 158), (184, 200, 215)),
@@ -37,33 +40,28 @@ class PygameGameView:
         self._font_menu = font_menu
         self._font_hint = font_hint
         self._map_rect: Any | None = None
-        self._map_objects: list[dict[str, Any]] = []
-        self._units: list[dict[str, Any]] = []
+        self._map_objects: list[MapObjectSnapshot] = []
+        self._units: list[UnitSnapshot] = []
         self._selected_unit_id: str | None = None
-        self._mission_objectives: tuple[dict[str, str], ...] = ()
+        self._mission_objectives: tuple[MissionObjectiveDefinitionSnapshot, ...] = ()
         self._mission_objective_status: dict[str, bool] = {}
 
-    def apply_game_state(
-        self,
-        *,
-        map_objects: tuple[dict[str, object], ...],
-        units: tuple[dict[str, object], ...],
-        selected_unit_id: str | None,
-        objective_definitions: tuple[dict[str, str], ...],
-        objective_status: dict[str, bool],
-    ) -> None:
-        self._map_objects = [dict(map_object) for map_object in map_objects]
-        self._units = [dict(unit) for unit in units]
-        self._selected_unit_id = selected_unit_id
-        self._mission_objectives = tuple(dict(objective) for objective in objective_definitions)
-        self._mission_objective_status = dict(objective_status)
+    def apply_game_state(self, *, snapshot: GameStateSnapshot) -> None:
+        self._map_objects = list(snapshot.map_objects)
+        self._units = list(snapshot.units)
+        self._selected_unit_id = snapshot.selected_unit_id
+        self._mission_objectives = snapshot.objective_definitions
+        self._mission_objective_status = {
+            objective_progress.objective_id: objective_progress.completed
+            for objective_progress in snapshot.objective_progress
+        }
 
     def clear_game_state(self) -> None:
         self._map_objects = []
         self._units = []
         self._selected_unit_id = None
         self._mission_objective_status = {
-            objective["objective_id"]: False for objective in self._mission_objectives
+            objective.objective_id: False for objective in self._mission_objectives
         }
 
     def render(self, *, character_name: str, show_running_hint: bool) -> None:
@@ -76,10 +74,10 @@ class PygameGameView:
 
         hovered_object = self._find_hovered_map_object()
         if hovered_object is not None:
-            keys = _MAP_OBJECT_TEXT_KEYS.get(hovered_object["id"])
+            keys = _MAP_OBJECT_TEXT_KEYS.get(hovered_object.object_id)
             if keys is not None:
                 self._draw_object_tooltip(
-                    target_rect=self._rect_from_bounds(hovered_object["bounds"]),
+                    target_rect=self._rect_from_bounds(hovered_object.bounds),
                     title=text(keys[0]),
                     description=text(keys[1]),
                 )
@@ -96,9 +94,9 @@ class PygameGameView:
         pygame = self._pygame
         for map_object in self._map_objects:
             fill_color, border_color = _MAP_OBJECT_STYLES.get(
-                map_object["id"], ((95, 113, 129), (184, 200, 215))
+                map_object.object_id, ((95, 113, 129), (184, 200, 215))
             )
-            object_rect = self._rect_from_bounds(map_object["bounds"])
+            object_rect = self._rect_from_bounds(map_object.bounds)
             pygame.draw.rect(self._screen, fill_color, object_rect, border_radius=8)
             pygame.draw.rect(self._screen, border_color, object_rect, 2, border_radius=8)
 
@@ -106,7 +104,7 @@ class PygameGameView:
         pygame = self._pygame
         for unit in self._units:
             fill_color, border_color = _UNIT_MARKER_STYLES.get(
-                unit.get("unit_type_id", ""),
+                unit.unit_type_id,
                 ((180, 180, 180), (72, 72, 72)),
             )
             unit_rect = self._get_unit_rect(unit)
@@ -118,7 +116,7 @@ class PygameGameView:
                 unit_rect.height + 2,
             )
             pygame.draw.rect(self._screen, border_color, selection_rect, 2, border_radius=6)
-            if unit.get("unit_id") == self._selected_unit_id:
+            if unit.unit_id == self._selected_unit_id:
                 selected_rect = pygame.Rect(
                     unit_rect.left - 5,
                     unit_rect.top - 5,
@@ -135,10 +133,10 @@ class PygameGameView:
         title_surface = self._font_hint.render(text("mission.objectives.title"), True, (236, 241, 246))
         line_entries: list[tuple[Any, bool]] = []
         for objective in self._mission_objectives:
-            objective_id = objective["objective_id"]
+            objective_id = objective.objective_id
             is_completed = self._mission_objective_status.get(objective_id, False)
             checkbox = "[x]" if is_completed else "[ ]"
-            label = text(objective["description_key"])
+            label = text(objective.description_key)
             line_color = (142, 150, 160) if is_completed else (212, 222, 232)
             line_entries.append((self._font_hint.render(f"{checkbox} {label}", True, line_color), is_completed))
 
@@ -175,21 +173,21 @@ class PygameGameView:
                 )
             y += surface.get_height() + line_gap
 
-    def _get_unit_rect(self, unit: dict[str, Any] | None = None) -> Any:
+    def _get_unit_rect(self, unit: UnitSnapshot | None = None) -> Any:
         pygame = self._pygame
         active_unit = unit if unit is not None else (self._units[0] if self._units else None)
         if active_unit is None:
             return pygame.Rect(0, 0, 18, 18)
-        position = active_unit.get("position", (0.0, 0.0))
-        size = int(active_unit.get("marker_size_px", 18))
+        position = active_unit.position
+        size = int(active_unit.marker_size_px)
         left = int(float(position[0]) - size / 2)
         top = int(float(position[1]) - size / 2)
         return pygame.Rect(left, top, size, size)
 
-    def _find_hovered_map_object(self) -> dict[str, Any] | None:
+    def _find_hovered_map_object(self) -> MapObjectSnapshot | None:
         mouse_x, mouse_y = self._get_mouse_position()
         for map_object in self._map_objects:
-            if self._point_in_bounds((mouse_x, mouse_y), map_object["bounds"]):
+            if self._point_in_bounds((mouse_x, mouse_y), map_object.bounds):
                 return map_object
         return None
 

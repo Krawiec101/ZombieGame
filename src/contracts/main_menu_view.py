@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-try:
-    from contracts.events import DomainEvent, UIEvent
-except ModuleNotFoundError:
-    from src.contracts.events import DomainEvent, UIEvent
+from contracts.events import DomainEvent, UIEvent
 
 
 class MainMenuView(Protocol):

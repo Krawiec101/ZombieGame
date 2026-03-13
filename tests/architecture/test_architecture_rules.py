@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import ast
+import inspect
 import re
+from typing import get_type_hints
 from pathlib import Path
 
 from pytestarch import Rule, get_evaluable_architecture
 
+from contracts.game_state import GameStateSnapshot
+from ui.game_views.pygame_game_view import PygameGameView
+
+
+def _root_dir() -> Path:
+    return Path(__file__).resolve().parents[2]
+
 
 def _architecture(*, exclude_external_libraries: bool = True):
-    root_dir = Path(__file__).resolve().parents[2]
+    root_dir = _root_dir()
     return get_evaluable_architecture(
         str(root_dir),
         str(root_dir / "src"),
@@ -16,8 +26,7 @@ def _architecture(*, exclude_external_libraries: bool = True):
 
 
 def _module_prefix() -> str:
-    root_dir = Path(__file__).resolve().parents[2]
-    return f"{root_dir.name}.src"
+    return f"{_root_dir().name}.src"
 
 
 def _module_alias_regex(*module_roots: str) -> str:
@@ -28,7 +37,7 @@ def _module_alias_regex(*module_roots: str) -> str:
 
 
 def _source_module_roots() -> set[str]:
-    src_dir = Path(__file__).resolve().parents[2] / "src"
+    src_dir = _root_dir() / "src"
     roots: set[str] = set()
     for entry in src_dir.iterdir():
         if entry.name.startswith(".") or entry.name == "__pycache__":
@@ -38,6 +47,29 @@ def _source_module_roots() -> set[str]:
         elif entry.suffix == ".py":
             roots.add(entry.stem)
     return roots
+
+
+def _parse_module(relative_path: str) -> ast.AST:
+    source = (_root_dir() / relative_path).read_text(encoding="utf-8")
+    return ast.parse(source, filename=relative_path)
+
+
+def _attribute_call_names(relative_path: str) -> set[str]:
+    names: set[str] = set()
+    for node in ast.walk(_parse_module(relative_path)):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            names.add(node.func.attr)
+    return names
+
+
+def _uses_module_not_found_fallback(relative_path: str) -> bool:
+    for node in ast.walk(_parse_module(relative_path)):
+        if not isinstance(node, ast.Try):
+            continue
+        for handler in node.handlers:
+            if isinstance(handler.type, ast.Name) and handler.type.id == "ModuleNotFoundError":
+                return True
+    return False
 
 
 def test_core_does_not_depend_on_ui() -> None:
@@ -73,29 +105,46 @@ def test_app_only_depends_on_app_core_ui_or_contracts_internally() -> None:
 
 
 def test_mission_objectives_logic_lives_in_core_not_ui() -> None:
-    root_dir = Path(__file__).resolve().parents[2]
+    root_dir = _root_dir()
     assert (root_dir / "src" / "core" / "mission_objectives.py").exists()
     assert not (root_dir / "src" / "ui" / "game_views" / "mission_objectives.py").exists()
 
 
 def test_game_session_and_units_logic_lives_in_core_not_ui() -> None:
-    root_dir = Path(__file__).resolve().parents[2]
+    root_dir = _root_dir()
     assert (root_dir / "src" / "core" / "game_session.py").exists()
     assert not (root_dir / "src" / "ui" / "game_views" / "units.py").exists()
 
 
-def test_ui_game_view_is_state_driven_without_core_service_reference() -> None:
-    root_dir = Path(__file__).resolve().parents[2]
-    source = (root_dir / "src" / "ui" / "game_views" / "pygame_game_view.py").read_text(
-        encoding="utf-8"
-    )
-    assert "game_session" not in source
+def test_ui_game_view_consumes_typed_game_state_snapshot() -> None:
+    _ = inspect.signature(PygameGameView.apply_game_state)
+    assert get_type_hints(PygameGameView.apply_game_state)["snapshot"] is GameStateSnapshot
+
+
+def test_ui_game_view_does_not_invoke_core_session_methods_directly() -> None:
+    forbidden_calls = {
+        "handle_left_click",
+        "handle_right_click",
+        "sync_state",
+        "update_map_dimensions",
+    }
+    assert not (_attribute_call_names("src/ui/game_views/pygame_game_view.py") & forbidden_calls)
 
 
 def test_pygame_menu_view_emits_game_events_instead_of_service_calls() -> None:
-    root_dir = Path(__file__).resolve().parents[2]
-    source = (root_dir / "src" / "ui" / "menus" / "pygame_main_menu_view.py").read_text(
-        encoding="utf-8"
-    )
-    assert "handle_left_click(" not in source
-    assert "handle_right_click(" not in source
+    forbidden_calls = {
+        "handle_left_click",
+        "handle_right_click",
+        "sync_state",
+        "update_map_dimensions",
+    }
+    assert not (_attribute_call_names("src/ui/menus/pygame_main_menu_view.py") & forbidden_calls)
+
+
+def test_source_modules_do_not_use_module_path_fallback_imports() -> None:
+    fallback_files = [
+        path.relative_to(_root_dir()).as_posix()
+        for path in (_root_dir() / "src").rglob("*.py")
+        if _uses_module_not_found_fallback(path.relative_to(_root_dir()).as_posix())
+    ]
+    assert fallback_files == []

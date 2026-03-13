@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 
+from contracts.game_state import GameStateSnapshot, MissionObjectiveProgressSnapshot
 from core.game_session import UNIT_TYPE_SPECS, UnitState, create_default_game_session
 
 
@@ -23,6 +24,82 @@ def test_game_session_initializes_map_objects_and_units() -> None:
     unit_type_ids = {unit["unit_type_id"] for unit in session.units_snapshot()}
     assert map_object_ids == {"hq", "landing_pad"}
     assert unit_type_ids == {"infantry_squad", "motorized_infantry_squad"}
+
+
+def test_snapshot_exposes_typed_contract_for_ui_sync() -> None:
+    session = create_default_game_session()
+    session.update_map_dimensions(width=960, height=640)
+    session.tick()
+
+    snapshot = session.snapshot()
+
+    assert isinstance(snapshot, GameStateSnapshot)
+    assert {map_object.object_id for map_object in snapshot.map_objects} == {"hq", "landing_pad"}
+    assert {unit.unit_type_id for unit in snapshot.units} == {
+        "infantry_squad",
+        "motorized_infantry_squad",
+    }
+    assert snapshot.objective_progress == (
+        MissionObjectiveProgressSnapshot(
+            objective_id="motorized_to_landing_pad",
+            completed=False,
+        ),
+    )
+    assert snapshot.selected_unit_id is None
+    assert snapshot.objective_definitions == (
+        session.snapshot().objective_definitions[0].__class__(
+            objective_id="motorized_to_landing_pad",
+            description_key="mission.objective.motorized_to_landing_pad",
+        ),
+    )
+
+
+def test_snapshot_includes_selected_unit_and_pending_target() -> None:
+    session = create_default_game_session()
+    session.update_map_dimensions(width=960, height=640)
+    session.tick()
+    infantry = _unit_by_id(session.units_snapshot(), "alpha_infantry")
+
+    session.handle_left_click(_unit_center(infantry))
+    session.handle_left_click((840, 500))
+    snapshot = session.snapshot()
+
+    assert snapshot.selected_unit_id == "alpha_infantry"
+    alpha = next(unit for unit in snapshot.units if unit.unit_id == "alpha_infantry")
+    assert alpha.target == (840.0, 500.0)
+    assert alpha.marker_size_px == UNIT_TYPE_SPECS["infantry_squad"].marker_size_px
+
+
+def test_snapshot_returns_value_objects_independent_from_future_session_mutation() -> None:
+    session = create_default_game_session()
+    session.update_map_dimensions(width=960, height=640)
+    session.tick()
+    snapshot_before = session.snapshot()
+
+    infantry = _unit_by_id(session.units_snapshot(), "alpha_infantry")
+    session.handle_left_click(_unit_center(infantry))
+    session.handle_left_click((840, 500))
+    session.tick()
+
+    snapshot_after = session.snapshot()
+
+    assert snapshot_before != snapshot_after
+    alpha_before = next(unit for unit in snapshot_before.units if unit.unit_id == "alpha_infantry")
+    alpha_after = next(unit for unit in snapshot_after.units if unit.unit_id == "alpha_infantry")
+    assert alpha_before.target is None
+    assert alpha_after.target is not None
+
+
+def test_sync_state_updates_dimensions_ticks_and_returns_snapshot() -> None:
+    session = create_default_game_session()
+
+    snapshot = session.sync_state(width=960, height=640)
+
+    assert isinstance(snapshot, GameStateSnapshot)
+    assert session._map_size == (960, 640)
+    assert snapshot.map_objects
+    assert snapshot.units
+    assert snapshot == session.snapshot()
 
 
 def test_left_click_selects_unit() -> None:
