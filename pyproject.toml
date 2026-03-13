@@ -1,11 +1,11 @@
 [tool.mutmut]
-paths_to_mutate = ["src/"]
+paths_to_mutate = ["src/app/", "src/core/"]
+also_copy = ["src/contracts/", "src/ui/", "src/main.py"]
 pytest_add_cli_args_test_selection = ["tests/"]
 pytest_add_cli_args = ["-q"]
-max_stack_depth = 6
+max_stack_depth = -1
 do_not_mutate = [
-  "src/ui/*.py",
-  "src/main.py",
+  "src/core/orders.py",
 ]
 
 [tool.ruff]

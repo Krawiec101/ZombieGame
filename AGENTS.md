@@ -208,3 +208,4 @@ Before finishing work, check:
 - whether the README needs an update
 - whether an ADR is needed
 - whether CI/CD still validates everything it should
+- whether all CI/CD pipeline steps were executed locally by the agent before finishing work

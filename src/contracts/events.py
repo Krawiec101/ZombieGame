@@ -24,6 +24,22 @@ class ExitRequested(UIEvent):
 
 
 @dataclass(frozen=True)
+class GameFrameSyncRequested(UIEvent):
+    width: int
+    height: int
+
+
+@dataclass(frozen=True)
+class GameLeftClickRequested(UIEvent):
+    position: tuple[int, int]
+
+
+@dataclass(frozen=True)
+class GameRightClickRequested(UIEvent):
+    position: tuple[int, int]
+
+
+@dataclass(frozen=True)
 class DomainEvent:
     pass
 
@@ -41,6 +57,15 @@ class LoadGameFlowRouted(DomainEvent):
 @dataclass(frozen=True)
 class ExitFlowRouted(DomainEvent):
     pass
+
+
+@dataclass(frozen=True)
+class GameStateSynced(DomainEvent):
+    map_objects: tuple[dict[str, object], ...]
+    units: tuple[dict[str, object], ...]
+    selected_unit_id: str | None
+    objective_definitions: tuple[dict[str, str], ...]
+    objective_status: dict[str, bool]
 
 
 @dataclass(frozen=True)

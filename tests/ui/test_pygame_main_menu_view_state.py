@@ -9,6 +9,10 @@ import ui.menus.pygame_main_menu_view as pygame_view_module
 from contracts.events import (
     ExitFlowRouted,
     ExitRequested,
+    GameFrameSyncRequested,
+    GameLeftClickRequested,
+    GameRightClickRequested,
+    GameStateSynced,
     LoadGameFlowRouted,
     LoadGameRequested,
     NewGameFlowRouted,
@@ -371,7 +375,8 @@ def test_poll_ui_events_welcome_modal_enter_starts_game_mode(pygame_view) -> Non
 
     events = view.poll_ui_events()
 
-    assert events == []
+    assert len(events) == 1
+    assert isinstance(events[0], GameFrameSyncRequested)
     assert view._mode == "game"
 
 
@@ -382,35 +387,36 @@ def test_poll_ui_events_game_mode_escape_opens_context_menu(pygame_view) -> None
 
     events = view.poll_ui_events()
 
-    assert events == []
+    assert len(events) == 1
+    assert isinstance(events[0], GameFrameSyncRequested)
     assert view._mode == "game_context_menu"
 
 
-def test_poll_ui_events_game_mode_left_click_forwards_order_to_game_view(pygame_view) -> None:
+def test_poll_ui_events_game_mode_left_click_emits_domain_command(pygame_view) -> None:
     view, fake_pygame = pygame_view
     view._mode = "game"
-    clicks: list[tuple[int, int]] = []
-    view._game_view.handle_left_click = lambda pos: clicks.append(pos)
     fake_pygame.event.queue = [_event(fake_pygame.MOUSEBUTTONDOWN, button=1, pos=(320, 220))]
 
     events = view.poll_ui_events()
 
-    assert events == []
-    assert clicks == [(320, 220)]
+    assert len(events) == 2
+    assert isinstance(events[0], GameLeftClickRequested)
+    assert events[0].position == (320, 220)
+    assert isinstance(events[1], GameFrameSyncRequested)
     assert view._mode == "game"
 
 
-def test_poll_ui_events_game_mode_right_click_forwards_to_game_view(pygame_view) -> None:
+def test_poll_ui_events_game_mode_right_click_emits_domain_command(pygame_view) -> None:
     view, fake_pygame = pygame_view
     view._mode = "game"
-    clicks: list[tuple[int, int]] = []
-    view._game_view.handle_right_click = lambda pos: clicks.append(pos)
     fake_pygame.event.queue = [_event(fake_pygame.MOUSEBUTTONDOWN, button=3, pos=(420, 300))]
 
     events = view.poll_ui_events()
 
-    assert events == []
-    assert clicks == [(420, 300)]
+    assert len(events) == 2
+    assert isinstance(events[0], GameRightClickRequested)
+    assert events[0].position == (420, 300)
+    assert isinstance(events[1], GameFrameSyncRequested)
     assert view._mode == "game"
 
 
@@ -421,7 +427,8 @@ def test_poll_ui_events_game_context_menu_escape_returns_to_game(pygame_view) ->
 
     events = view.poll_ui_events()
 
-    assert events == []
+    assert len(events) == 1
+    assert isinstance(events[0], GameFrameSyncRequested)
     assert view._mode == "game"
 
 
@@ -433,7 +440,8 @@ def test_poll_ui_events_game_context_menu_resume_click_returns_to_game(pygame_vi
 
     events = view.poll_ui_events()
 
-    assert events == []
+    assert len(events) == 1
+    assert isinstance(events[0], GameFrameSyncRequested)
     assert view._mode == "game"
 
 
@@ -457,8 +465,9 @@ def test_poll_ui_events_game_context_menu_exit_click_requests_exit(pygame_view) 
 
     events = view.poll_ui_events()
 
-    assert len(events) == 1
+    assert len(events) == 2
     assert isinstance(events[0], ExitRequested)
+    assert isinstance(events[1], GameFrameSyncRequested)
 
 
 def test_handle_domain_event_transitions_and_hints(pygame_view) -> None:
@@ -482,6 +491,52 @@ def test_handle_domain_event_transitions_and_hints(pygame_view) -> None:
 
     view.handle_domain_event(ExitFlowRouted())
     assert view._last_hint == "flow.exit"
+
+
+def test_handle_domain_event_new_game_clears_game_view_state(pygame_view) -> None:
+    view, _fake_pygame = pygame_view
+    calls = {"count": 0}
+    view._game_view.clear_game_state = lambda: calls.__setitem__("count", calls["count"] + 1)
+
+    view.handle_domain_event(NewGameFlowRouted())
+
+    assert calls["count"] == 1
+    assert view._mode == "name_modal"
+
+
+def test_handle_domain_event_game_state_synced_updates_game_view_state(pygame_view) -> None:
+    view, _fake_pygame = pygame_view
+    captured: dict[str, object] = {}
+
+    def capture_apply_game_state(**state: object) -> None:
+        captured.update(state)
+
+    view._game_view.apply_game_state = capture_apply_game_state
+    event = GameStateSynced(
+        map_objects=({"id": "hq", "bounds": (1, 2, 3, 4)},),
+        units=(
+            {
+                "unit_id": "u1",
+                "unit_type_id": "infantry_squad",
+                "position": (10.0, 20.0),
+                "target": None,
+                "marker_size_px": 18,
+            },
+        ),
+        selected_unit_id="u1",
+        objective_definitions=(
+            {
+                "objective_id": "o1",
+                "description_key": "objective.key",
+            },
+        ),
+        objective_status={"o1": True},
+    )
+
+    view.handle_domain_event(event)
+
+    assert captured["selected_unit_id"] == "u1"
+    assert captured["objective_status"] == {"o1": True}
 
 
 def test_close_is_idempotent(pygame_view) -> None:
@@ -683,14 +738,15 @@ def test_poll_ui_events_welcome_modal_escape_requests_exit(pygame_view) -> None:
     assert isinstance(events[0], ExitRequested)
 
 
-def test_poll_ui_events_game_mode_non_escape_key_returns_no_events(pygame_view) -> None:
+def test_poll_ui_events_game_mode_non_escape_key_emits_frame_sync(pygame_view) -> None:
     view, fake_pygame = pygame_view
     view._mode = "game"
     fake_pygame.event.queue = [_event(fake_pygame.KEYDOWN, key=999, unicode="")]
 
     events = view.poll_ui_events()
 
-    assert events == []
+    assert len(events) == 1
+    assert isinstance(events[0], GameFrameSyncRequested)
 
 
 def test_draw_wrapped_text_around_rect_returns_early_for_empty_text(pygame_view) -> None:
