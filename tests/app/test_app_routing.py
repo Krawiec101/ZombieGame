@@ -4,7 +4,9 @@ from dataclasses import dataclass
 
 import pytest
 
+import app.application_loop as application_loop_module
 from app import app as app_module
+import app.ui_event_handler as ui_event_handler_module
 from contracts.events import (
     DomainEvent,
     ExitFlowRouted,
@@ -19,6 +21,13 @@ from contracts.events import (
     NewGameRequested,
     UIEvent,
     UIEventIgnored,
+)
+from contracts.game_state import (
+    GameStateSnapshot,
+    MapObjectSnapshot,
+    MissionObjectiveDefinitionSnapshot,
+    MissionObjectiveProgressSnapshot,
+    UnitSnapshot,
 )
 
 
@@ -68,6 +77,32 @@ class FakeGameSession:
     def tick(self) -> None:
         self.tick_calls += 1
 
+    def sync_state(self, *, width: int, height: int) -> GameStateSnapshot:
+        self.update_map_dimensions(width=width, height=height)
+        self.tick()
+        return GameStateSnapshot(
+            map_objects=(MapObjectSnapshot(object_id="hq", bounds=(1, 2, 3, 4)),),
+            units=(
+                UnitSnapshot(
+                    unit_id="u1",
+                    unit_type_id="infantry_squad",
+                    position=(5.0, 6.0),
+                    target=None,
+                    marker_size_px=18,
+                ),
+            ),
+            selected_unit_id="u1",
+            objective_definitions=(
+                MissionObjectiveDefinitionSnapshot(
+                    objective_id="o1",
+                    description_key="objective.o1",
+                ),
+            ),
+            objective_progress=(
+                MissionObjectiveProgressSnapshot(objective_id="o1", completed=False),
+            ),
+        )
+
     def handle_left_click(self, position: tuple[int, int]) -> None:
         self.left_clicks.append(position)
 
@@ -111,8 +146,8 @@ def test_route_domain_event_new_game_keeps_loop_running() -> None:
     assert app_module.route_domain_event(NewGameFlowRouted()) is True
 
 
-def test_route_domain_event_load_game_stops_loop() -> None:
-    assert app_module.route_domain_event(LoadGameFlowRouted()) is False
+def test_route_domain_event_load_game_keeps_loop_running() -> None:
+    assert app_module.route_domain_event(LoadGameFlowRouted()) is True
 
 
 def test_route_domain_event_ignored_keeps_loop_running() -> None:
@@ -141,17 +176,20 @@ def test_handle_ui_event_game_frame_sync_updates_session_and_emits_snapshot() ->
     assert session.tick_calls == 1
     assert len(domain_events) == 1
     assert isinstance(domain_events[0], GameStateSynced)
-    assert domain_events[0].units == (
-        {
-            "unit_id": "u1",
-            "unit_type_id": "infantry_squad",
-            "position": (5.0, 6.0),
-            "target": None,
-            "marker_size_px": 18,
-        },
+    assert domain_events[0].snapshot.units == (
+        UnitSnapshot(
+            unit_id="u1",
+            unit_type_id="infantry_squad",
+            position=(5.0, 6.0),
+            target=None,
+            marker_size_px=18,
+        ),
     )
-    assert domain_events[0].objective_definitions == (
-        {"objective_id": "o1", "description_key": "objective.o1"},
+    assert domain_events[0].snapshot.objective_definitions == (
+        MissionObjectiveDefinitionSnapshot(
+            objective_id="o1",
+            description_key="objective.o1",
+        ),
     )
 
 
@@ -197,9 +235,13 @@ def test_sync_game_state_builds_snapshot_from_game_session() -> None:
     assert session.update_calls == [(640, 480)]
     assert session.tick_calls == 1
     assert isinstance(domain_event, GameStateSynced)
-    assert domain_event.map_objects == ({"id": "hq", "bounds": (1, 2, 3, 4)},)
-    assert domain_event.selected_unit_id == "u1"
-    assert domain_event.objective_status == {"o1": False}
+    assert domain_event.snapshot.map_objects == (
+        MapObjectSnapshot(object_id="hq", bounds=(1, 2, 3, 4)),
+    )
+    assert domain_event.snapshot.selected_unit_id == "u1"
+    assert domain_event.snapshot.objective_progress == (
+        MissionObjectiveProgressSnapshot(objective_id="o1", completed=False),
+    )
 
 
 def test_run_creates_view_and_delegates_to_main_loop(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -308,15 +350,16 @@ def test_run_main_menu_loop_uses_falsey_provided_session_instead_of_creating_def
     assert created == []
 
 
-def test_run_main_menu_loop_repeats_when_no_events_then_stops() -> None:
-    view = FakeView([[], [LoadGameRequested()]])
+def test_run_main_menu_loop_repeats_when_load_game_is_stubbed_then_stops_on_exit() -> None:
+    view = FakeView([[], [LoadGameRequested()], [ExitRequested()]])
 
     app_module._run_main_menu_loop(view)
 
-    assert view.render_calls == 2
-    assert view.poll_calls == 2
+    assert view.render_calls == 3
+    assert view.poll_calls == 3
     assert view.close_calls == 1
     assert isinstance(view.handled_domain_events[0], LoadGameFlowRouted)
+    assert isinstance(view.handled_domain_events[1], ExitFlowRouted)
 
 
 def test_run_main_menu_loop_continues_after_new_game_until_exit() -> None:
@@ -349,7 +392,7 @@ def test_run_main_menu_loop_closes_view_when_core_handler_raises(monkeypatch: py
     def raising_handler(_event: UIEvent) -> DomainEvent:
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(app_module, "handle_main_menu_ui_event", raising_handler)
+    monkeypatch.setattr(ui_event_handler_module, "handle_main_menu_ui_event", raising_handler)
 
     with pytest.raises(RuntimeError, match="boom"):
         app_module._run_main_menu_loop(view)
@@ -446,5 +489,28 @@ def test_run_main_menu_loop_continues_when_ui_event_maps_to_no_domain_events(
     assert calls == 2
     assert view.render_calls == 2
     assert view.poll_calls == 2
+    assert len(view.handled_domain_events) == 1
+    assert isinstance(view.handled_domain_events[0], ExitFlowRouted)
+
+
+def test_application_loop_stops_without_processing_next_ui_event_in_same_batch() -> None:
+    first = UnknownUIEvent()
+    second = UnknownUIEvent()
+    view = FakeView([[first, second]])
+    handled_ui_events: list[UIEvent] = []
+
+    def fake_handle_ui_event(event: UIEvent, _game_session: FakeGameSession) -> tuple[DomainEvent, ...]:
+        handled_ui_events.append(event)
+        return (ExitFlowRouted(),)
+
+    application_loop_module.run_main_menu_loop(
+        view,
+        game_session=FakeGameSession(),
+        create_default_game_session=FakeGameSession,
+        handle_ui_event=fake_handle_ui_event,
+        route_domain_event=lambda _event: False,
+    )
+
+    assert handled_ui_events == [first]
     assert len(view.handled_domain_events) == 1
     assert isinstance(view.handled_domain_events[0], ExitFlowRouted)
