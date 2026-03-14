@@ -8,6 +8,7 @@ from contracts.events import (
     GameFrameSyncRequested,
     GameLeftClickRequested,
     GameRightClickRequested,
+    GameSupplyRouteRequested,
     GameStateSynced,
     NewGameFlowRouted,
     UIEvent,
@@ -28,6 +29,9 @@ class GameSessionPort(Protocol):
         ...
 
     def handle_right_click(self, position: tuple[int, int]) -> None:
+        ...
+
+    def handle_supply_route(self, *, source_object_id: str, destination_object_id: str) -> None:
         ...
 
 
@@ -64,6 +68,13 @@ def handle_ui_event(
 
     if isinstance(event, GameRightClickRequested):
         game_session.handle_right_click(event.position)
+        return ()
+
+    if isinstance(event, GameSupplyRouteRequested):
+        game_session.handle_supply_route(
+            source_object_id=event.source_object_id,
+            destination_object_id=event.destination_object_id,
+        )
         return ()
 
     return (routed_event,)

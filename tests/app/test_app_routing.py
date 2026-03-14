@@ -14,6 +14,7 @@ from contracts.events import (
     GameFrameSyncRequested,
     GameLeftClickRequested,
     GameRightClickRequested,
+    GameSupplyRouteRequested,
     GameStateSynced,
     LoadGameFlowRouted,
     LoadGameRequested,
@@ -67,6 +68,7 @@ class FakeGameSession:
         self.tick_calls = 0
         self.left_clicks: list[tuple[int, int]] = []
         self.right_clicks: list[tuple[int, int]] = []
+        self.supply_routes: list[tuple[str, str]] = []
 
     def reset(self) -> None:
         self.reset_calls += 1
@@ -108,6 +110,9 @@ class FakeGameSession:
 
     def handle_right_click(self, _position: tuple[int, int]) -> None:
         self.right_clicks.append(_position)
+
+    def handle_supply_route(self, *, source_object_id: str, destination_object_id: str) -> None:
+        self.supply_routes.append((source_object_id, destination_object_id))
 
     def map_objects_snapshot(self) -> list[dict[str, object]]:
         return [{"id": "hq", "bounds": (1, 2, 3, 4)}]
@@ -214,6 +219,18 @@ def test_handle_ui_event_game_right_click_delegates_without_domain_event() -> No
     )
 
     assert session.right_clicks == [(420, 300)]
+    assert domain_events == ()
+
+
+def test_handle_ui_event_supply_route_delegates_without_domain_event() -> None:
+    session = FakeGameSession()
+
+    domain_events = app_module.handle_ui_event(
+        GameSupplyRouteRequested(source_object_id="landing_pad", destination_object_id="hq"),
+        game_session=session,
+    )
+
+    assert session.supply_routes == [("landing_pad", "hq")]
     assert domain_events == ()
 
 
@@ -514,3 +531,29 @@ def test_application_loop_stops_without_processing_next_ui_event_in_same_batch()
     assert handled_ui_events == [first]
     assert len(view.handled_domain_events) == 1
     assert isinstance(view.handled_domain_events[0], ExitFlowRouted)
+
+
+def test_application_loop_processes_multiple_domain_events_until_router_returns_false() -> None:
+    ui_event = UnknownUIEvent()
+    view = FakeView([[ui_event]])
+    routed_events: list[DomainEvent] = []
+
+    def fake_handle_ui_event(_event: UIEvent, _game_session: FakeGameSession) -> tuple[DomainEvent, ...]:
+        return (NewGameFlowRouted(), ExitFlowRouted())
+
+    def fake_route_domain_event(event: DomainEvent) -> bool:
+        routed_events.append(event)
+        return not isinstance(event, ExitFlowRouted)
+
+    application_loop_module.run_main_menu_loop(
+        view,
+        game_session=FakeGameSession(),
+        create_default_game_session=FakeGameSession,
+        handle_ui_event=fake_handle_ui_event,
+        route_domain_event=fake_route_domain_event,
+    )
+
+    assert routed_events == [NewGameFlowRouted(), ExitFlowRouted()]
+    assert [type(event) for event in view.handled_domain_events] == [NewGameFlowRouted, ExitFlowRouted]
+    assert view.render_calls == 1
+    assert view.poll_calls == 1
