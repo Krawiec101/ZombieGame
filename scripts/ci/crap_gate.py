@@ -23,7 +23,16 @@ class FunctionMetric:
     endline: int
     complexity: int
     coverage: float
+    has_coverage_data: bool
     crap: float
+
+
+@dataclass(frozen=True)
+class CrapThresholds:
+    max_crap_per_function: float
+    max_high_crap_functions: int
+    min_coverage_for_high_complexity: float
+    high_complexity_threshold: int
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,6 +40,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--coverage-xml", default="coverage.xml", help="Path to the coverage XML report.")
     parser.add_argument("--source-dir", default="src", help="Directory to analyze with radon.")
     parser.add_argument("--summary-md", default="crap-summary.md", help="Markdown summary output path.")
+    parser.add_argument(
+        "--max-crap-per-function",
+        type=float,
+        default=MAX_CRAP_PER_FUNCTION,
+        help="Maximum allowed CRAP value for a single function/method.",
+    )
+    parser.add_argument(
+        "--max-high-crap-functions",
+        type=int,
+        default=MAX_HIGH_CRAP_FUNCTIONS,
+        help="Maximum allowed number of functions/methods exceeding the CRAP threshold.",
+    )
+    parser.add_argument(
+        "--min-coverage-for-high-complexity",
+        type=float,
+        default=MIN_COVERAGE_FOR_HIGH_COMPLEXITY,
+        help="Minimum coverage ratio required for high-complexity functions/methods.",
+    )
+    parser.add_argument(
+        "--high-complexity-threshold",
+        type=int,
+        default=HIGH_COMPLEXITY_THRESHOLD,
+        help="Cyclomatic complexity threshold treated as high complexity.",
+    )
     return parser.parse_args()
 
 
@@ -143,13 +176,13 @@ def flatten_complexity_entries(file_path: str, entries: list[dict[str, object]])
     return blocks
 
 
-def calculate_function_coverage(file_lines: dict[int, int], lineno: int, endline: int) -> float:
+def calculate_function_coverage(file_lines: dict[int, int], lineno: int, endline: int) -> tuple[float, bool]:
     executable_lines = [hits for line_number, hits in file_lines.items() if lineno <= line_number <= endline]
     if not executable_lines:
-        return 0.0
+        return 0.0, False
 
     covered_lines = sum(1 for hits in executable_lines if hits > 0)
-    return covered_lines / len(executable_lines)
+    return covered_lines / len(executable_lines), True
 
 
 def calculate_crap(complexity: int, coverage: float) -> float:
@@ -167,7 +200,7 @@ def build_metrics(
         lineno = int(block["lineno"])
         endline = int(block["endline"])
         complexity = int(block["complexity"])
-        coverage = calculate_function_coverage(coverage_lines.get(file_path, {}), lineno, endline)
+        coverage, has_coverage_data = calculate_function_coverage(coverage_lines.get(file_path, {}), lineno, endline)
 
         metrics.append(
             FunctionMetric(
@@ -177,6 +210,7 @@ def build_metrics(
                 endline=endline,
                 complexity=complexity,
                 coverage=coverage,
+                has_coverage_data=has_coverage_data,
                 crap=calculate_crap(complexity, coverage),
             )
         )
@@ -185,14 +219,18 @@ def build_metrics(
     return metrics
 
 
-def build_summary(metrics: list[FunctionMetric]) -> tuple[str, bool]:
-    high_crap_functions = [metric for metric in metrics if metric.crap > MAX_CRAP_PER_FUNCTION]
+def build_summary(metrics: list[FunctionMetric], thresholds: CrapThresholds) -> tuple[str, bool]:
+    high_crap_functions = [metric for metric in metrics if metric.crap > thresholds.max_crap_per_function]
     undercovered_high_complexity_functions = [
         metric
         for metric in metrics
-        if metric.complexity >= HIGH_COMPLEXITY_THRESHOLD and metric.coverage < MIN_COVERAGE_FOR_HIGH_COMPLEXITY
+        if metric.complexity >= thresholds.high_complexity_threshold
+        and metric.coverage < thresholds.min_coverage_for_high_complexity
     ]
-    failed = len(high_crap_functions) > MAX_HIGH_CRAP_FUNCTIONS or bool(undercovered_high_complexity_functions)
+    missing_coverage_functions = [metric for metric in metrics if not metric.has_coverage_data]
+    failed = len(high_crap_functions) > thresholds.max_high_crap_functions or bool(
+        undercovered_high_complexity_functions
+    )
     status = "FAIL" if failed else "PASS"
 
     lines = [
@@ -204,18 +242,19 @@ def build_summary(metrics: list[FunctionMetric]) -> tuple[str, bool]:
         "",
         "### Thresholds",
         "",
-        f"- `max_crap_per_function`: `{MAX_CRAP_PER_FUNCTION:.1f}`",
-        f"- `max_high_crap_functions`: `{MAX_HIGH_CRAP_FUNCTIONS}`",
-        f"- `min_coverage_for_high_complexity`: `{MIN_COVERAGE_FOR_HIGH_COMPLEXITY:.0%}`",
-        f"- `high_complexity_threshold`: `{HIGH_COMPLEXITY_THRESHOLD}`",
+        f"- `max_crap_per_function`: `{thresholds.max_crap_per_function:.1f}`",
+        f"- `max_high_crap_functions`: `{thresholds.max_high_crap_functions}`",
+        f"- `min_coverage_for_high_complexity`: `{thresholds.min_coverage_for_high_complexity:.0%}`",
+        f"- `high_complexity_threshold`: `{thresholds.high_complexity_threshold}`",
         "",
         "### Counts",
         "",
-        f"- Functions with `CRAP > {MAX_CRAP_PER_FUNCTION:.1f}`: **{len(high_crap_functions)}**",
+        f"- Functions with `CRAP > {thresholds.max_crap_per_function:.1f}`: **{len(high_crap_functions)}**",
         (
-            f"- Functions with `CC >= {HIGH_COMPLEXITY_THRESHOLD}` and coverage "
-            f"`< {MIN_COVERAGE_FOR_HIGH_COMPLEXITY:.0%}`: **{len(undercovered_high_complexity_functions)}**"
+            f"- Functions with `CC >= {thresholds.high_complexity_threshold}` and coverage "
+            f"`< {thresholds.min_coverage_for_high_complexity:.0%}`: **{len(undercovered_high_complexity_functions)}**"
         ),
+        f"- Functions without mapped coverage lines: **{len(missing_coverage_functions)}**",
         "",
         f"### Top {min(TOP_FUNCTIONS_LIMIT, len(metrics))} functions by CRAP",
         "",
@@ -244,12 +283,18 @@ def main() -> int:
     coverage_xml_path = Path(args.coverage_xml)
     source_dir = Path(args.source_dir)
     summary_path = Path(args.summary_md)
+    thresholds = CrapThresholds(
+        max_crap_per_function=args.max_crap_per_function,
+        max_high_crap_functions=args.max_high_crap_functions,
+        min_coverage_for_high_complexity=args.min_coverage_for_high_complexity,
+        high_complexity_threshold=args.high_complexity_threshold,
+    )
 
     try:
         coverage_lines = load_coverage_lines(coverage_xml_path)
         complexity_blocks = load_complexity_blocks(source_dir)
         metrics = build_metrics(coverage_lines, complexity_blocks)
-        summary, failed = build_summary(metrics)
+        summary, failed = build_summary(metrics, thresholds)
         summary_path.write_text(summary, encoding="utf-8")
         print(summary, end="")
         return 1 if failed else 0

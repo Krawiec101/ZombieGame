@@ -8,6 +8,8 @@ import textwrap
 from types import SimpleNamespace
 from pathlib import Path
 
+import pytest
+
 
 def find_script_path() -> Path:
     for parent in Path(__file__).resolve().parents:
@@ -55,6 +57,7 @@ def write_coverage_xml(path: Path, filename: str, line_hits: dict[int, int]) -> 
 
 
 def run_crap_gate(source_dir: Path, coverage_xml: Path, summary_md: Path) -> subprocess.CompletedProcess[str]:
+    pytest.importorskip("radon")
     return subprocess.run(
         [
             sys.executable,
@@ -245,3 +248,85 @@ def test_crap_gate_fails_for_high_complexity_function_with_low_coverage(tmp_path
     assert "Status: **FAIL**" in summary
     assert "Functions with `CC >= 15` and coverage `< 80%`: **1**" in summary
     assert "`complex_guard`" in summary
+
+
+def test_calculate_function_coverage_marks_missing_data() -> None:
+    coverage, has_coverage_data = CRAP_GATE.calculate_function_coverage({}, 10, 20)
+
+    assert coverage == 0.0
+    assert has_coverage_data is False
+
+
+def test_build_summary_reports_missing_coverage() -> None:
+    thresholds = CRAP_GATE.CrapThresholds(
+        max_crap_per_function=30.0,
+        max_high_crap_functions=0,
+        min_coverage_for_high_complexity=0.80,
+        high_complexity_threshold=15,
+    )
+    metrics = [
+        CRAP_GATE.FunctionMetric(
+            file_path="core/sample.py",
+            name="sample",
+            lineno=1,
+            endline=5,
+            complexity=1,
+            coverage=0.0,
+            has_coverage_data=False,
+            crap=1.0,
+        )
+    ]
+
+    summary, failed = CRAP_GATE.build_summary(metrics, thresholds)
+
+    assert failed is False
+    assert "Functions without mapped coverage lines: **1**" in summary
+
+
+def test_main_accepts_custom_threshold_arguments(tmp_path: Path) -> None:
+    pytest.importorskip("radon")
+    source_dir = tmp_path / "sample_src"
+    module_path = source_dir / "moderate.py"
+    write_module(
+        module_path,
+        """
+        def moderate(value):
+            if value == 0:
+                return 0
+            if value == 1:
+                return 1
+            if value == 2:
+                return 2
+            if value == 3:
+                return 3
+            return -1
+        """,
+    )
+
+    coverage_xml = tmp_path / "coverage.xml"
+    write_coverage_xml(coverage_xml, "sample_src/moderate.py", {line_number: 0 for line_number in range(1, 11)})
+    summary_md = tmp_path / "crap-summary.md"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            "--source-dir",
+            str(source_dir),
+            "--coverage-xml",
+            str(coverage_xml),
+            "--summary-md",
+            str(summary_md),
+            "--max-crap-per-function",
+            "5",
+            "--max-high-crap-functions",
+            "0",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    summary = summary_md.read_text(encoding="utf-8")
+    assert "Functions with `CRAP > 5.0`: **1**" in summary
