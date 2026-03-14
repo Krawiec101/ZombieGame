@@ -99,6 +99,24 @@ jobs:
 
           cat coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Run CRAP quality gate
+        run: |
+          set +e
+          docker compose run --rm app python scripts/ci/crap_gate.py --coverage-xml coverage.xml --source-dir src --summary-md crap-summary.md > crap-report.txt 2>&1
+          CRAP_EXIT=$?
+          set -e
+
+          cat crap-report.txt
+
+          if [ -f crap-summary.md ]; then
+            cat crap-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$CRAP_EXIT" -ne 0 ]; then
+            echo "FAIL: CRAP thresholds exceeded"
+            exit "$CRAP_EXIT"
+          fi
+
       - name: Run architecture tests (PyTestArch)
         run: |
           set +e

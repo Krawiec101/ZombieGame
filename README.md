@@ -80,6 +80,13 @@ Tylko testy architektury (PyTestArch):
 
 Pipeline CI uruchamia `pytest` z `pytest-cov` dla testow funkcjonalnych/jednostkowych oraz osobny krok dla testow architektury (`tests/architecture`, PyTestArch). Podsumowania sa publikowane w zakladce `Checks` (GitHub Step Summary).
 
+Po kroku coverage dziala tez bramka CRAP (Change Risk Anti-Patterns), liczona na podstawie `coverage.xml` i cyclomatic complexity z `radon`.
+Progi startowe w CI:
+- `max_crap_per_function = 30.0`
+- `max_high_crap_functions = 0`
+- `min_coverage_for_high_complexity = 80%`
+- `high_complexity_threshold = 15`
+
 ## Testy mutacyjne
 
 Projekt korzysta z `mutmut`:
