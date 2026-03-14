@@ -6,4 +6,5 @@ pytestarch==4.0.1
 pygame==2.6.1
 mutmut
 pip-audit==2.8.0
+radon==6.0.1
 ruff==0.13.1
