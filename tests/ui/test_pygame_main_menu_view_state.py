@@ -12,6 +12,7 @@ from contracts.events import (
     GameFrameSyncRequested,
     GameLeftClickRequested,
     GameRightClickRequested,
+    GameSupplyRouteRequested,
     GameStateSynced,
     LoadGameFlowRouted,
     LoadGameRequested,
@@ -199,7 +200,8 @@ class _FakeScreen:
 class _FakePygame(ModuleType):
     QUIT = 0
     MOUSEBUTTONDOWN = 1
-    KEYDOWN = 2
+    MOUSEBUTTONUP = 2
+    KEYDOWN = 3
     K_1 = 11
     K_KP1 = 12
     K_2 = 13
@@ -416,7 +418,10 @@ def test_poll_ui_events_game_mode_left_click_emits_domain_command(pygame_view) -
 def test_poll_ui_events_game_mode_right_click_emits_domain_command(pygame_view) -> None:
     view, fake_pygame = pygame_view
     view._mode = "game"
-    fake_pygame.event.queue = [_event(fake_pygame.MOUSEBUTTONDOWN, button=3, pos=(420, 300))]
+    fake_pygame.event.queue = [
+        _event(fake_pygame.MOUSEBUTTONDOWN, button=3, pos=(420, 300)),
+        _event(fake_pygame.MOUSEBUTTONUP, button=3, pos=(420, 300)),
+    ]
 
     events = view.poll_ui_events()
 
@@ -424,6 +429,139 @@ def test_poll_ui_events_game_mode_right_click_emits_domain_command(pygame_view) 
     assert isinstance(events[0], GameRightClickRequested)
     assert events[0].position == (420, 300)
     assert isinstance(events[1], GameFrameSyncRequested)
+    assert view._mode == "game"
+
+
+def test_poll_ui_events_game_mode_right_hold_opens_unit_context_menu_when_route_possible(
+    pygame_view,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game"
+    view._game_view.selected_unit_can_create_supply_route = lambda: True
+    view._game_view.selected_unit_contains_point = lambda _pos: True
+    monotonic_values = iter([100.0, 101.1])
+    monkeypatch.setattr(pygame_view_module.time, "monotonic", lambda: next(monotonic_values))
+
+    fake_pygame.event.queue = [_event(fake_pygame.MOUSEBUTTONDOWN, button=3, pos=(420, 300))]
+    events = view.poll_ui_events()
+
+    assert len(events) == 1
+    assert isinstance(events[0], GameFrameSyncRequested)
+    assert view._mode == "game_unit_context_menu"
+
+
+def test_poll_ui_events_game_mode_right_hold_without_route_option_keeps_short_click_behavior(
+    pygame_view,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game"
+    view._game_view.selected_unit_can_create_supply_route = lambda: False
+    view._game_view.selected_unit_contains_point = lambda _pos: True
+    monotonic_values = iter([100.0, 101.2])
+    monkeypatch.setattr(pygame_view_module.time, "monotonic", lambda: next(monotonic_values))
+
+    fake_pygame.event.queue = [_event(fake_pygame.MOUSEBUTTONDOWN, button=3, pos=(420, 300))]
+    events = view.poll_ui_events()
+
+    assert len(events) == 1
+    assert isinstance(events[0], GameFrameSyncRequested)
+    assert view._mode == "game"
+    assert view._right_mouse_hold_position == (420, 300)
+
+
+def test_poll_ui_events_game_mode_right_hold_over_non_selected_unit_does_not_open_convoy_menu(
+    pygame_view,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game"
+    view._game_view.selected_unit_can_create_supply_route = lambda: True
+    view._game_view.selected_unit_contains_point = lambda _pos: False
+    monotonic_values = iter([100.0])
+    monkeypatch.setattr(pygame_view_module.time, "monotonic", lambda: next(monotonic_values))
+    fake_pygame.event.queue = [_event(fake_pygame.MOUSEBUTTONDOWN, button=3, pos=(420, 300))]
+
+    events = view.poll_ui_events()
+
+    assert len(events) == 1
+    assert isinstance(events[0], GameFrameSyncRequested)
+    assert view._mode == "game"
+    assert view._right_mouse_hold_position == (420, 300)
+
+
+def test_poll_ui_events_unit_context_menu_click_starts_supply_route_planning(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game_unit_context_menu"
+    view._unit_context_menu_hitboxes = {"create_supply_route": _AlwaysHitbox()}
+    fake_pygame.event.queue = [_event(fake_pygame.MOUSEBUTTONDOWN, button=1, pos=(20, 20))]
+
+    events = view.poll_ui_events()
+
+    assert len(events) == 1
+    assert isinstance(events[0], GameFrameSyncRequested)
+    assert view._mode == "game_supply_route_planning"
+
+
+def test_poll_ui_events_unit_context_menu_escape_and_right_click_close_menu(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game_unit_context_menu"
+    fake_pygame.event.queue = [_event(fake_pygame.KEYDOWN, key=fake_pygame.K_ESCAPE, unicode="")]
+
+    events = view.poll_ui_events()
+
+    assert len(events) == 1
+    assert isinstance(events[0], GameFrameSyncRequested)
+    assert view._mode == "game"
+
+    view._mode = "game_unit_context_menu"
+    fake_pygame.event.queue = [_event(fake_pygame.MOUSEBUTTONDOWN, button=3, pos=(20, 20))]
+    events = view.poll_ui_events()
+
+    assert len(events) == 1
+    assert isinstance(events[0], GameFrameSyncRequested)
+    assert view._mode == "game"
+
+
+def test_poll_ui_events_supply_route_planning_collects_source_and_destination(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game_supply_route_planning"
+    view._game_view.map_object_at = lambda pos: SimpleNamespace(object_id="landing_pad" if pos == (10, 10) else "hq")
+    view._game_view.supply_route_source_candidates = lambda: ("landing_pad",)
+    view._game_view.supply_route_destination_candidates = lambda *, source_object_id: ("hq",)
+    fake_pygame.event.queue = [
+        _event(fake_pygame.MOUSEBUTTONDOWN, button=1, pos=(10, 10)),
+        _event(fake_pygame.MOUSEBUTTONDOWN, button=1, pos=(20, 20)),
+    ]
+
+    events = view.poll_ui_events()
+
+    assert len(events) == 2
+    assert isinstance(events[0], GameSupplyRouteRequested)
+    assert events[0].source_object_id == "landing_pad"
+    assert events[0].destination_object_id == "hq"
+    assert isinstance(events[1], GameFrameSyncRequested)
+    assert view._mode == "game"
+
+
+def test_poll_ui_events_supply_route_planning_escape_and_invalid_click_keep_or_cancel(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game_supply_route_planning"
+    view._game_view.map_object_at = lambda _pos: None
+    fake_pygame.event.queue = [_event(fake_pygame.MOUSEBUTTONDOWN, button=1, pos=(10, 10))]
+
+    events = view.poll_ui_events()
+
+    assert len(events) == 1
+    assert isinstance(events[0], GameFrameSyncRequested)
+    assert view._mode == "game_supply_route_planning"
+
+    fake_pygame.event.queue = [_event(fake_pygame.KEYDOWN, key=fake_pygame.K_ESCAPE, unicode="")]
+    events = view.poll_ui_events()
+
+    assert len(events) == 1
+    assert isinstance(events[0], GameFrameSyncRequested)
     assert view._mode == "game"
 
 
@@ -477,12 +615,43 @@ def test_poll_ui_events_game_context_menu_exit_click_requests_exit(pygame_view) 
     assert isinstance(events[1], GameFrameSyncRequested)
 
 
+@pytest.mark.parametrize(
+    ("key", "expected_mode", "expected_event_type"),
+    [
+        (_FakePygame.K_1, "game", None),
+        (_FakePygame.K_2, "menu", None),
+        (_FakePygame.K_3, "game_context_menu", ExitRequested),
+    ],
+)
+def test_poll_ui_events_game_context_menu_keyboard_shortcuts(
+    key: int,
+    expected_mode: str,
+    expected_event_type: type | None,
+    pygame_view,
+) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game_context_menu"
+    fake_pygame.event.queue = [_event(fake_pygame.KEYDOWN, key=key, unicode="")]
+
+    events = view.poll_ui_events()
+
+    if events:
+        assert isinstance(events[-1], GameFrameSyncRequested)
+    assert view._mode == expected_mode
+    if expected_event_type is None:
+        assert all(not isinstance(event, ExitRequested) for event in events)
+    else:
+        assert isinstance(events[0], expected_event_type)
+
+
 def test_handle_domain_event_transitions_and_hints(pygame_view) -> None:
     view, _fake_pygame = pygame_view
     view._character_name = "Old"
     view._character_name_input = "Tmp"
     view._modal_ok_hitbox = _AlwaysHitbox()
     view._last_hint = "old-hint"
+    view._right_mouse_hold_position = (10, 10)
+    view._right_mouse_hold_started_at = 100.0
     view._mode = "menu"
 
     view.handle_domain_event(NewGameFlowRouted())
@@ -491,6 +660,7 @@ def test_handle_domain_event_transitions_and_hints(pygame_view) -> None:
     assert view._character_name_input == ""
     assert view._modal_ok_hitbox is None
     assert view._last_hint is None
+    assert view._right_mouse_hold_position is None
     assert view._mode == "name_modal"
 
     view.handle_domain_event(LoadGameFlowRouted())
@@ -611,6 +781,59 @@ def test_render_game_context_menu_sets_context_actions_and_flips_display(pygame_
     assert set(view._context_menu_hitboxes) == {"resume", "to_menu", "exit"}
 
 
+def test_render_unit_context_menu_sets_supply_action_hitbox(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game_unit_context_menu"
+
+    view.render()
+
+    assert fake_pygame.display.flip_calls == 1
+    assert set(view._unit_context_menu_hitboxes) == {"create_supply_route"}
+
+
+def test_handle_domain_event_game_state_synced_closes_unit_context_when_route_action_unavailable(
+    pygame_view,
+) -> None:
+    view, _fake_pygame = pygame_view
+    view._mode = "game_unit_context_menu"
+    view._game_view.selected_unit_can_create_supply_route = lambda: False
+
+    view.handle_domain_event(
+        GameStateSynced(
+            snapshot=GameStateSnapshot(
+                map_objects=(),
+                units=(),
+                selected_unit_id=None,
+                objective_definitions=(),
+                objective_progress=(),
+            )
+        )
+    )
+
+    assert view._mode == "game"
+
+
+def test_poll_ui_events_game_mode_escape_clears_pending_right_hold(
+    pygame_view,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game"
+    monotonic_values = iter([100.0])
+    monkeypatch.setattr(pygame_view_module.time, "monotonic", lambda: next(monotonic_values))
+    fake_pygame.event.queue = [
+        _event(fake_pygame.MOUSEBUTTONDOWN, button=3, pos=(20, 20)),
+        _event(fake_pygame.KEYDOWN, key=fake_pygame.K_ESCAPE, unicode=""),
+    ]
+
+    events = view.poll_ui_events()
+
+    assert len(events) == 1
+    assert isinstance(events[0], GameFrameSyncRequested)
+    assert view._mode == "game_context_menu"
+    assert view._right_mouse_hold_position is None
+
+
 def test_render_game_context_menu_centers_modal_on_screen(pygame_view) -> None:
     view, _fake_pygame = pygame_view
     view._mode = "game_context_menu"
@@ -729,6 +952,19 @@ def test_poll_ui_events_welcome_modal_click_without_hitbox_keeps_modal(pygame_vi
 
     assert events == []
     assert view._mode == "welcome_modal"
+
+
+def test_poll_ui_events_welcome_modal_click_with_hitbox_enters_game(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "welcome_modal"
+    view._modal_ok_hitbox = _AlwaysHitbox()
+    fake_pygame.event.queue = [_event(fake_pygame.MOUSEBUTTONDOWN, button=1, pos=(20, 20))]
+
+    events = view.poll_ui_events()
+
+    assert len(events) == 1
+    assert isinstance(events[0], GameFrameSyncRequested)
+    assert view._mode == "game"
 
 
 def test_poll_ui_events_welcome_modal_ignores_non_key_non_click_events(pygame_view) -> None:

@@ -174,9 +174,10 @@ For larger changes:
 2. propose a minimal scope of changes
 3. implement the changes
 4. run tests
-5. update documentation if needed
-6. determine whether an ADR is needed
-7. ensure CI/CD still validates what it should
+5. run SCA/lint checks
+6. update documentation if needed
+7. determine whether an ADR is needed
+8. ensure CI/CD still validates what it should
 
 ---
 
@@ -204,6 +205,7 @@ Before finishing work, check:
 - whether the UI / App / Core separation is preserved
 - whether communication goes through events/commands
 - whether tests pass
+- whether SCA/lint checks pass
 - whether architecture tests cover new rules
 - whether the README needs an update
 - whether an ADR is needed

@@ -125,6 +125,7 @@ def test_ui_game_view_does_not_invoke_core_session_methods_directly() -> None:
     forbidden_calls = {
         "handle_left_click",
         "handle_right_click",
+        "handle_supply_route",
         "sync_state",
         "update_map_dimensions",
     }
@@ -135,6 +136,7 @@ def test_pygame_menu_view_emits_game_events_instead_of_service_calls() -> None:
     forbidden_calls = {
         "handle_left_click",
         "handle_right_click",
+        "handle_supply_route",
         "sync_state",
         "update_map_dimensions",
     }

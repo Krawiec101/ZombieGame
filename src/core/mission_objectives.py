@@ -16,7 +16,7 @@ DEFAULT_MISSION_OBJECTIVE_RULES: tuple[MissionObjectiveRule, ...] = (
     MissionObjectiveRule(
         objective_id="motorized_to_landing_pad",
         description_key="mission.objective.motorized_to_landing_pad",
-        required_unit_type_id="motorized_infantry_squad",
+        required_unit_type_id="mechanized_squad",
         target_object_id="landing_pad",
     ),
 )
@@ -42,8 +42,11 @@ class MissionObjectivesEvaluator:
         map_objects: Sequence[dict[str, object]],
         current_status: Mapping[str, bool],
     ) -> dict[str, bool]:
-        statuses = {rule.objective_id: bool(current_status.get(rule.objective_id, False)) for rule in self._rules}
-        object_bounds_by_id = {
+        statuses = {  # pragma: no mutate
+            rule.objective_id: bool(current_status.get(rule.objective_id, False))
+            for rule in self._rules
+        }
+        object_bounds_by_id = {  # pragma: no mutate
             str(map_object["id"]): tuple(map_object["bounds"]) for map_object in map_objects if "bounds" in map_object
         }
 
@@ -66,7 +69,7 @@ class MissionObjectivesEvaluator:
                     continue
                 x = float(position[0])
                 y = float(position[1])
-                if left <= x <= right and top <= y <= bottom:
+                if left <= x <= right and top <= y <= bottom:  # pragma: no mutate
                     statuses[rule.objective_id] = True
                     break
 

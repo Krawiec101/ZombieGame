@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from contracts.events import (
@@ -9,6 +10,7 @@ from contracts.events import (
     GameFrameSyncRequested,
     GameLeftClickRequested,
     GameRightClickRequested,
+    GameSupplyRouteRequested,
     GameStateSynced,
     LoadGameFlowRouted,
     LoadGameRequested,
@@ -27,6 +29,7 @@ _MENU_OPTION_LABEL_KEYS = {
 }
 _WINDOWED_FALLBACK_SIZE = (1280, 720)
 _MODAL_SHELL_SIZE = (480, 248)
+_UNIT_CONTEXT_MENU_HOLD_SECONDS = 1.0
 
 
 class PygameMainMenuView:
@@ -53,10 +56,16 @@ class PygameMainMenuView:
         self._last_hint: str | None = None
         self._menu_hitboxes: dict[str, Any] = {}
         self._context_menu_hitboxes: dict[str, Any] = {}
+        self._unit_context_menu_hitboxes: dict[str, Any] = {}
+        self._unit_context_menu_anchor = (0, 0)
+        self._right_mouse_hold_started_at: float | None = None
+        self._right_mouse_hold_position: tuple[int, int] | None = None
+        self._right_mouse_hold_allows_menu = False
         self._modal_ok_hitbox: Any | None = None
         self._mode = "menu"
         self._character_name = ""
         self._character_name_input = ""
+        self._planned_supply_route_source_id: str | None = None
         self._closed = False
 
     def _create_screen(self) -> Any:
@@ -78,6 +87,8 @@ class PygameMainMenuView:
             self._render_welcome_modal()
         elif self._mode == "game_context_menu":
             self._render_game_context_menu()
+        elif self._mode == "game_unit_context_menu":
+            self._render_unit_context_menu()
 
         self._pygame.display.flip()
 
@@ -99,8 +110,19 @@ class PygameMainMenuView:
                 self._handle_game_event(pygame_event, events)
             elif self._mode == "game_context_menu":
                 self._handle_game_context_menu_event(pygame_event, events)
+            elif self._mode == "game_unit_context_menu":
+                self._handle_unit_context_menu_event(pygame_event, events)
+            elif self._mode == "game_supply_route_planning":
+                self._handle_supply_route_planning_event(pygame_event, events)
 
-        if self._mode in {"game", "game_context_menu"}:
+        self._update_mouse_holds()
+
+        if self._mode in {
+            "game",
+            "game_context_menu",
+            "game_unit_context_menu",
+            "game_supply_route_planning",
+        }:
             width, height = self._screen.get_size()
             events.append(GameFrameSyncRequested(width=width, height=height))
 
@@ -114,10 +136,15 @@ class PygameMainMenuView:
             self._character_name_input = ""
             self._modal_ok_hitbox = None
             self._context_menu_hitboxes = {}
+            self._unit_context_menu_hitboxes = {}
+            self._planned_supply_route_source_id = None
+            self._clear_right_mouse_hold()
             self._last_hint = None
             self._mode = "name_modal"
         elif isinstance(event, GameStateSynced):
             self._game_view.apply_game_state(snapshot=event.snapshot)
+            if self._mode == "game_unit_context_menu" and not self._game_view.selected_unit_can_create_supply_route():
+                self._close_unit_context_menu()
         elif isinstance(event, LoadGameFlowRouted):
             self._last_hint = text("flow.load_game.stub")
         elif isinstance(event, ExitFlowRouted):
@@ -163,6 +190,7 @@ class PygameMainMenuView:
         self._game_view.render(
             character_name=self._character_name,
             show_running_hint=self._mode == "game",
+            supply_route_planning=self._supply_route_planning_state(),
         )
 
     def _render_game_context_menu(self) -> None:
@@ -184,6 +212,28 @@ class PygameMainMenuView:
             pygame.draw.rect(self._screen, (128, 138, 158), button_rect, 2, border_radius=6)
             self._draw_text_in_rect(label, self._font_hint, (238, 239, 243), button_rect)
             self._context_menu_hitboxes[action] = button_rect
+
+    def _render_unit_context_menu(self) -> None:
+        pygame = self._pygame
+        menu_width = 240
+        menu_height = 52
+        screen_width, screen_height = self._screen.get_size()
+        left = min(self._unit_context_menu_anchor[0], max(0, screen_width - menu_width - 8))
+        top = min(self._unit_context_menu_anchor[1], max(0, screen_height - menu_height - 8))
+        menu_rect = pygame.Rect(left, top, menu_width, menu_height)
+        pygame.draw.rect(self._screen, (24, 30, 43), menu_rect, border_radius=8)
+        pygame.draw.rect(self._screen, (112, 124, 146), menu_rect, 2, border_radius=8)
+
+        button_rect = pygame.Rect(menu_rect.left + 8, menu_rect.top + 8, menu_rect.width - 16, 36)
+        pygame.draw.rect(self._screen, (96, 124, 84), button_rect, border_radius=6)
+        pygame.draw.rect(self._screen, (196, 218, 174), button_rect, 2, border_radius=6)
+        self._draw_text_in_rect(
+            text("game.supply_route.menu.create"),
+            self._font_hint,
+            (243, 245, 238),
+            button_rect,
+        )
+        self._unit_context_menu_hitboxes = {"create_supply_route": button_rect}
 
     def _render_name_modal(self) -> None:
         pygame = self._pygame
@@ -348,10 +398,18 @@ class PygameMainMenuView:
                 events.append(GameLeftClickRequested(position=pygame_event.pos))
                 return
             if pygame_event.button == 3:
-                events.append(GameRightClickRequested(position=pygame_event.pos))
+                self._begin_right_mouse_hold(pygame_event.pos)
+                return
+
+        if pygame_event.type == getattr(pygame, "MOUSEBUTTONUP", object()):
+            if pygame_event.button == 3:
+                if self._right_mouse_hold_position is not None:
+                    events.append(GameRightClickRequested(position=self._right_mouse_hold_position))
+                self._clear_right_mouse_hold()
                 return
 
         if pygame_event.type == pygame.KEYDOWN and pygame_event.key == pygame.K_ESCAPE:
+            self._clear_right_mouse_hold()
             self._open_game_context_menu()
 
     def _handle_game_context_menu_event(self, pygame_event: Any, events: list[UIEvent]) -> None:
@@ -380,6 +438,66 @@ class PygameMainMenuView:
 
         if pygame_event.key in (pygame.K_3, pygame.K_KP3):
             self._handle_context_menu_action("exit", events)
+
+    def _handle_unit_context_menu_event(self, pygame_event: Any, events: list[UIEvent]) -> None:
+        pygame = self._pygame
+        if pygame_event.type == pygame.MOUSEBUTTONDOWN:
+            if pygame_event.button == 1:
+                for action, hitbox in self._unit_context_menu_hitboxes.items():
+                    if hitbox.collidepoint(pygame_event.pos):
+                        if action == "create_supply_route":
+                            self._begin_supply_route_planning()
+                        return
+                self._close_unit_context_menu()
+                return
+
+            if pygame_event.button == 3:
+                self._close_unit_context_menu()
+                return
+
+        if pygame_event.type != pygame.KEYDOWN:
+            return
+
+        if pygame_event.key == pygame.K_ESCAPE:
+            self._close_unit_context_menu()
+            return
+
+        if pygame_event.key in (pygame.K_1, pygame.K_KP1):
+            self._begin_supply_route_planning()
+
+    def _handle_supply_route_planning_event(self, pygame_event: Any, events: list[UIEvent]) -> None:
+        pygame = self._pygame
+        if pygame_event.type == pygame.MOUSEBUTTONDOWN:
+            if pygame_event.button == 3:
+                self._cancel_supply_route_planning()
+                return
+
+            if pygame_event.button != 1:
+                return
+
+            clicked_object = self._game_view.map_object_at(pygame_event.pos)
+            if clicked_object is None:
+                return
+
+            if self._planned_supply_route_source_id is None:
+                if clicked_object.object_id in self._game_view.supply_route_source_candidates():
+                    self._planned_supply_route_source_id = clicked_object.object_id
+                return
+
+            if clicked_object.object_id in self._game_view.supply_route_destination_candidates(
+                source_object_id=self._planned_supply_route_source_id,
+            ):
+                events.append(
+                    GameSupplyRouteRequested(
+                        source_object_id=self._planned_supply_route_source_id,
+                        destination_object_id=clicked_object.object_id,
+                    )
+                )
+                self._cancel_supply_route_planning()
+                return
+
+        if pygame_event.type == pygame.KEYDOWN and pygame_event.key == pygame.K_ESCAPE:
+            self._cancel_supply_route_planning()
 
     def _handle_context_menu_action(self, action: str, events: list[UIEvent]) -> None:
         if action == "resume":
@@ -443,9 +561,15 @@ class PygameMainMenuView:
     def _enter_game(self) -> None:
         self._modal_ok_hitbox = None
         self._context_menu_hitboxes = {}
+        self._unit_context_menu_hitboxes = {}
+        self._planned_supply_route_source_id = None
+        self._clear_right_mouse_hold()
         self._mode = "game"
 
     def _open_game_context_menu(self) -> None:
+        self._unit_context_menu_hitboxes = {}
+        self._planned_supply_route_source_id = None
+        self._clear_right_mouse_hold()
         self._context_menu_hitboxes = {}
         self._mode = "game_context_menu"
 
@@ -453,13 +577,84 @@ class PygameMainMenuView:
         self._context_menu_hitboxes = {}
         self._mode = "game"
 
+    def _open_unit_context_menu(self, position: tuple[int, int]) -> None:
+        self._context_menu_hitboxes = {}
+        self._unit_context_menu_anchor = position
+        self._unit_context_menu_hitboxes = {}
+        self._clear_right_mouse_hold()
+        self._mode = "game_unit_context_menu"
+
+    def _close_unit_context_menu(self) -> None:
+        self._unit_context_menu_hitboxes = {}
+        self._mode = "game"
+
+    def _begin_supply_route_planning(self) -> None:
+        self._unit_context_menu_hitboxes = {}
+        self._planned_supply_route_source_id = None
+        self._clear_right_mouse_hold()
+        self._mode = "game_supply_route_planning"
+
+    def _cancel_supply_route_planning(self) -> None:
+        self._planned_supply_route_source_id = None
+        self._clear_right_mouse_hold()
+        self._mode = "game"
+
     def _return_to_main_menu(self) -> None:
         self._context_menu_hitboxes = {}
+        self._unit_context_menu_hitboxes = {}
         self._modal_ok_hitbox = None
+        self._planned_supply_route_source_id = None
+        self._clear_right_mouse_hold()
         self._mode = "menu"
+
+    def _supply_route_planning_state(self) -> dict[str, Any] | None:
+        if self._mode != "game_supply_route_planning":
+            return None
+
+        if self._planned_supply_route_source_id is None:
+            return {
+                "candidate_ids": self._game_view.supply_route_source_candidates(),
+                "instruction_key": "game.supply_route.planning.pickup",
+                "chosen_source_id": None,
+            }
+
+        return {
+            "candidate_ids": self._game_view.supply_route_destination_candidates(
+                source_object_id=self._planned_supply_route_source_id,
+            ),
+            "instruction_key": "game.supply_route.planning.dropoff",
+            "chosen_source_id": self._planned_supply_route_source_id,
+        }
 
     def _has_valid_character_name(self) -> bool:
         return bool(self._character_name_input.strip())
+
+    def _begin_right_mouse_hold(self, position: tuple[int, int]) -> None:
+        self._right_mouse_hold_started_at = time.monotonic()
+        self._right_mouse_hold_position = position
+        self._right_mouse_hold_allows_menu = (
+            self._game_view.selected_unit_can_create_supply_route()
+            and self._game_view.selected_unit_contains_point(position)
+        )
+
+    def _clear_right_mouse_hold(self) -> None:
+        self._right_mouse_hold_started_at = None
+        self._right_mouse_hold_position = None
+        self._right_mouse_hold_allows_menu = False
+
+    def _update_mouse_holds(self) -> None:
+        if self._mode != "game":
+            return
+        if self._right_mouse_hold_started_at is None or self._right_mouse_hold_position is None:
+            return
+        if not self._right_mouse_hold_allows_menu:
+            return
+        if not self._game_view.selected_unit_contains_point(self._right_mouse_hold_position):
+            self._clear_right_mouse_hold()
+            return
+        if (time.monotonic() - self._right_mouse_hold_started_at) < _UNIT_CONTEXT_MENU_HOLD_SECONDS:
+            return
+        self._open_unit_context_menu(self._right_mouse_hold_position)
 
     def _draw_text(
         self, text: str, font: Any, color: tuple[int, int, int], y: int

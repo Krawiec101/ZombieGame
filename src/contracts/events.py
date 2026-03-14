@@ -42,6 +42,12 @@ class GameRightClickRequested(UIEvent):
 
 
 @dataclass(frozen=True)
+class GameSupplyRouteRequested(UIEvent):
+    source_object_id: str
+    destination_object_id: str
+
+
+@dataclass(frozen=True)
 class DomainEvent:
     pass
 
