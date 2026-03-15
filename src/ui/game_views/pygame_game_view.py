@@ -11,6 +11,7 @@ from contracts.game_state import (
     SupplyRouteSnapshot,
     SupplyTransportSnapshot,
     UnitSnapshot,
+    ZombieGroupSnapshot,
 )
 from ui.i18n import text
 
@@ -25,6 +26,14 @@ _MAP_OBJECT_TEXT_KEYS: dict[str, tuple[str, str]] = {
 _UNIT_MARKER_STYLES: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
     "infantry_squad": ((208, 186, 104), (78, 66, 28)),
     "mechanized_squad": ((138, 173, 112), (42, 74, 38)),
+}
+_ENEMY_GROUP_STYLE = {
+    "fill": (146, 74, 74),
+    "border": (64, 22, 22),
+}
+_UNIT_TYPE_TEXT_KEYS = {
+    "infantry_squad": "game.unit.type.infantry_squad",
+    "mechanized_squad": "game.unit.type.mechanized_squad",
 }
 _SUPPLY_TRANSPORT_STYLES: dict[str, dict[str, Any]] = {
     "light_supply_helicopter": {
@@ -76,6 +85,7 @@ class PygameGameView:
         self._supply_routes: list[SupplyRouteSnapshot] = []
         self._supply_transports: list[SupplyTransportSnapshot] = []
         self._units: list[UnitSnapshot] = []
+        self._enemy_groups: list[ZombieGroupSnapshot] = []
         self._selected_unit_id: str | None = None
         self._mission_objectives: tuple[MissionObjectiveDefinitionSnapshot, ...] = ()
         self._mission_objective_status: dict[str, bool] = {}
@@ -87,6 +97,7 @@ class PygameGameView:
         self._supply_routes = list(snapshot.supply_routes)
         self._supply_transports = list(snapshot.supply_transports)
         self._units = list(snapshot.units)
+        self._enemy_groups = list(snapshot.enemy_groups)
         self._selected_unit_id = snapshot.selected_unit_id
         self._mission_objectives = snapshot.objective_definitions
         self._mission_objective_status = {
@@ -101,6 +112,7 @@ class PygameGameView:
         self._supply_routes = []
         self._supply_transports = []
         self._units = []
+        self._enemy_groups = []
         self._selected_unit_id = None
         self._mission_objective_status = {
             objective.objective_id: False for objective in self._mission_objectives
@@ -119,11 +131,34 @@ class PygameGameView:
         self._draw_map_objects()
         self._draw_supply_routes()
         self._draw_supply_transports()
+        self._draw_enemy_groups()
         self._draw_units()
         self._draw_mission_objectives_panel()
 
         if supply_route_planning is not None:
             self._draw_supply_route_planning_overlay(supply_route_planning)
+            return
+
+        hovered_unit = self._find_hovered_unit()
+        if hovered_unit is not None:
+            tooltip = self._tooltip_content_for_unit(hovered_unit)
+            self._draw_object_tooltip(
+                target_rect=self._get_unit_rect(hovered_unit),
+                title=tooltip["title"],
+                description=tooltip["description"],
+                detail_lines=tooltip["detail_lines"],
+            )
+            return
+
+        hovered_enemy_group = self._find_hovered_enemy_group()
+        if hovered_enemy_group is not None:
+            tooltip = self._tooltip_content_for_enemy_group(hovered_enemy_group)
+            self._draw_object_tooltip(
+                target_rect=self._get_enemy_group_rect(hovered_enemy_group),
+                title=tooltip["title"],
+                description=tooltip["description"],
+                detail_lines=tooltip["detail_lines"],
+            )
             return
 
         hovered_object = self._find_hovered_map_object()
@@ -246,6 +281,13 @@ class PygameGameView:
                 )
                 pygame.draw.rect(self._screen, (234, 224, 170), selected_rect, 2, border_radius=8)
 
+    def _draw_enemy_groups(self) -> None:
+        pygame = self._pygame
+        for enemy_group in self._enemy_groups:
+            enemy_rect = self._get_enemy_group_rect(enemy_group)
+            pygame.draw.rect(self._screen, _ENEMY_GROUP_STYLE["fill"], enemy_rect, border_radius=6)
+            pygame.draw.rect(self._screen, _ENEMY_GROUP_STYLE["border"], enemy_rect, 2, border_radius=6)
+
     def _draw_mission_objectives_panel(self) -> None:
         if not self._mission_objectives:
             return
@@ -305,6 +347,13 @@ class PygameGameView:
         top = int(float(position[1]) - size / 2)
         return pygame.Rect(left, top, size, size)
 
+    def _get_enemy_group_rect(self, enemy_group: ZombieGroupSnapshot) -> Any:
+        pygame = self._pygame
+        size = int(enemy_group.marker_size_px)
+        left = int(float(enemy_group.position[0]) - size / 2)
+        top = int(float(enemy_group.position[1]) - size / 2)
+        return pygame.Rect(left, top, size, size)
+
     def selected_unit(self) -> UnitSnapshot | None:
         if self._selected_unit_id is None:
             return None
@@ -346,6 +395,20 @@ class PygameGameView:
         for map_object in self._map_objects:
             if self._point_in_bounds((mouse_x, mouse_y), map_object.bounds):
                 return map_object
+        return None
+
+    def _find_hovered_unit(self) -> UnitSnapshot | None:
+        mouse_position = self._get_mouse_position()
+        for unit in reversed(self._units):
+            if self._get_unit_rect(unit).collidepoint(mouse_position):
+                return unit
+        return None
+
+    def _find_hovered_enemy_group(self) -> ZombieGroupSnapshot | None:
+        mouse_position = self._get_mouse_position()
+        for enemy_group in reversed(self._enemy_groups):
+            if self._get_enemy_group_rect(enemy_group).collidepoint(mouse_position):
+                return enemy_group
         return None
 
     def _get_mouse_position(self) -> tuple[int, int]:
@@ -424,6 +487,42 @@ class PygameGameView:
             "title": text(keys[0]),
             "description": text(keys[1]),
             "detail_lines": detail_lines,
+        }
+
+    def _tooltip_content_for_unit(self, unit: UnitSnapshot) -> dict[str, Any]:
+        return {
+            "title": unit.name or unit.unit_id,
+            "description": text(
+                _UNIT_TYPE_TEXT_KEYS.get(unit.unit_type_id, "game.unit.type.unknown")
+            ),
+            "detail_lines": (
+                text(
+                    "game.unit.commander",
+                    name=unit.commander.name,
+                    experience=text(f"game.experience.{unit.commander.experience_level}"),
+                ),
+                text(
+                    "game.unit.experience",
+                    experience=text(f"game.experience.{unit.experience_level}"),
+                ),
+                text("game.unit.personnel", value=unit.personnel),
+                text("game.unit.armament", value=text(unit.armament_key)),
+                text("game.unit.attack", value=unit.attack),
+                text("game.unit.defense", value=unit.defense),
+                text("game.unit.morale", value=unit.morale),
+                text("game.unit.ammo", value=unit.ammo),
+                text("game.unit.rations", value=unit.rations),
+                text("game.unit.fuel", value=unit.fuel),
+            ),
+        }
+
+    def _tooltip_content_for_enemy_group(self, enemy_group: ZombieGroupSnapshot) -> dict[str, Any]:
+        return {
+            "title": enemy_group.name or enemy_group.group_id,
+            "description": text("game.enemy_group.type.zombies"),
+            "detail_lines": (
+                text("game.enemy_group.personnel", value=enemy_group.personnel),
+            ),
         }
 
     def _base_detail_lines(self, base: BaseSnapshot) -> tuple[str, ...]:

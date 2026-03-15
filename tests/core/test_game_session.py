@@ -10,6 +10,7 @@ from contracts.game_state import (
     MissionObjectiveProgressSnapshot,
     SupplyRouteSnapshot,
     SupplyTransportSnapshot,
+    ZombieGroupSnapshot,
 )
 from core.game_session import (
     SUPPLY_TRANSPORT_TYPE_SPECS,
@@ -47,6 +48,10 @@ def _landing_pad_snapshot(session) -> LandingPadSnapshot:
     return session.landing_pads_snapshot()[0]
 
 
+def _enemy_group_snapshot(session) -> ZombieGroupSnapshot:
+    return session.enemy_groups_snapshot()[0]
+
+
 def test_game_session_initializes_map_objects_and_units() -> None:
     session = create_default_game_session()
     session.update_map_dimensions(width=960, height=640)
@@ -56,6 +61,15 @@ def test_game_session_initializes_map_objects_and_units() -> None:
     unit_type_ids = {unit["unit_type_id"] for unit in session.units_snapshot()}
     assert map_object_ids == {"hq", "landing_pad"}
     assert unit_type_ids == {"infantry_squad", "mechanized_squad"}
+    assert session.enemy_groups_snapshot() == (
+        ZombieGroupSnapshot(
+            group_id="zulu_zombies",
+            position=session.enemy_groups_snapshot()[0].position,
+            marker_size_px=22,
+            name="Mala grupa zombie",
+            personnel=7,
+        ),
+    )
 
 
 def test_snapshot_exposes_typed_contract_for_ui_sync() -> None:
@@ -101,6 +115,15 @@ def test_snapshot_exposes_typed_contract_for_ui_sync() -> None:
     )
     assert snapshot.supply_transports == ()
     assert snapshot.supply_routes == ()
+    assert snapshot.enemy_groups == (
+        ZombieGroupSnapshot(
+            group_id="zulu_zombies",
+            position=snapshot.enemy_groups[0].position,
+            marker_size_px=22,
+            name="Mala grupa zombie",
+            personnel=7,
+        ),
+    )
     assert snapshot.selected_unit_id is None
     assert snapshot.objective_definitions == (
         session.snapshot().objective_definitions[0].__class__(
@@ -123,6 +146,20 @@ def test_snapshot_includes_selected_unit_and_pending_target() -> None:
     assert snapshot.selected_unit_id == "alpha_infantry"
     alpha = next(unit for unit in snapshot.units if unit.unit_id == "alpha_infantry")
     assert alpha.target == (840.0, 500.0)
+    assert alpha.name == "1. Druzyna Alfa"
+    assert alpha.commander == alpha.commander.__class__(
+        name="por. Anna Sowa",
+        experience_level="regular",
+    )
+    assert alpha.experience_level == "recruit"
+    assert alpha.personnel == 10
+    assert alpha.armament_key == "game.unit.armament.rifles_lmg"
+    assert alpha.attack == 4
+    assert alpha.defense == 5
+    assert alpha.morale == 72
+    assert alpha.ammo == 90
+    assert alpha.rations == 18
+    assert alpha.fuel == 0
     assert alpha.marker_size_px == UNIT_TYPE_SPECS["infantry_squad"].marker_size_px
 
 
@@ -589,6 +626,17 @@ def test_units_snapshot_contains_expected_keys_marker_sizes_and_targets() -> Non
             "position",
             "target",
             "marker_size_px",
+            "name",
+            "commander",
+            "experience_level",
+            "personnel",
+            "armament_key",
+            "attack",
+            "defense",
+            "morale",
+            "ammo",
+            "rations",
+            "fuel",
             "can_transport_supplies",
             "supply_capacity",
             "carried_supply_total",
@@ -598,12 +646,40 @@ def test_units_snapshot_contains_expected_keys_marker_sizes_and_targets() -> Non
 
     updated_infantry = _unit_by_id(units, "alpha_infantry")
     assert updated_infantry["target"] == (840.0, 500.0)
+    assert updated_infantry["name"] == "1. Druzyna Alfa"
+    assert updated_infantry["commander"] == {
+        "name": "por. Anna Sowa",
+        "experience_level": "regular",
+    }
+    assert updated_infantry["experience_level"] == "recruit"
+    assert updated_infantry["personnel"] == 10
+    assert updated_infantry["armament_key"] == "game.unit.armament.rifles_lmg"
+    assert updated_infantry["attack"] == 4
+    assert updated_infantry["defense"] == 5
+    assert updated_infantry["morale"] == 72
+    assert updated_infantry["ammo"] == 90
+    assert updated_infantry["rations"] == 18
+    assert updated_infantry["fuel"] == 0
     assert updated_infantry["can_transport_supplies"] is False
     assert updated_infantry["supply_capacity"] == 0
     assert updated_infantry["carried_supply_total"] == 0
     assert updated_infantry["active_supply_route_id"] is None
 
     updated_motorized = _unit_by_id(units, "bravo_mechanized")
+    assert updated_motorized["name"] == "2. Sekcja Bravo"
+    assert updated_motorized["commander"] == {
+        "name": "kpt. Marek Wolny",
+        "experience_level": "veteran",
+    }
+    assert updated_motorized["experience_level"] == "regular"
+    assert updated_motorized["personnel"] == 8
+    assert updated_motorized["armament_key"] == "game.unit.armament.apc_autocannon"
+    assert updated_motorized["attack"] == 7
+    assert updated_motorized["defense"] == 8
+    assert updated_motorized["morale"] == 81
+    assert updated_motorized["ammo"] == 120
+    assert updated_motorized["rations"] == 24
+    assert updated_motorized["fuel"] == 65
     assert updated_motorized["can_transport_supplies"] is True
     assert updated_motorized["supply_capacity"] == 24
 
@@ -2015,9 +2091,23 @@ def test_snapshot_projects_current_bounds_positions_and_route_ids() -> None:
 
     assert {obj.object_id: obj.bounds for obj in snapshot.map_objects} == map_objects
     assert next(unit for unit in snapshot.units if unit.unit_id == "bravo_mechanized").position == motorized["position"]
+    assert snapshot.enemy_groups[0].group_id == "zulu_zombies"
     assert next(unit for unit in snapshot.units if unit.unit_id == "bravo_mechanized").active_supply_route_id == (
         "bravo_mechanized:landing_pad->hq"
     )
+
+
+def test_enemy_group_starts_on_landing_pad_center() -> None:
+    session = create_default_game_session()
+    session.update_map_dimensions(width=960, height=640)
+    session.tick()
+
+    landing_pad = next(obj for obj in session.map_objects_snapshot() if obj["id"] == "landing_pad")
+    left, top, right, bottom = landing_pad["bounds"]
+
+    enemy_group = _enemy_group_snapshot(session)
+
+    assert enemy_group.position == ((left + right) / 2.0, (top + bottom) / 2.0)
 
 
 def test_refresh_supply_route_removes_route_when_required_objects_disappear() -> None:

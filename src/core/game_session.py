@@ -16,7 +16,9 @@ from contracts.game_state import (
     MissionObjectiveProgressSnapshot,
     SupplyRouteSnapshot,
     SupplyTransportSnapshot,
+    UnitCommanderSnapshot,
     UnitSnapshot,
+    ZombieGroupSnapshot,
 )
 from core.mission_objectives import (
     MissionObjectivesEvaluator,
@@ -34,6 +36,7 @@ _BASE_SUPPLY_CAPACITY = 120
 _SUPPLY_CONVOY_UNIT_TYPE_ID = "mechanized_squad"
 _TRANSPORT_SPAWN_OFFSET_X = 96.0
 _TRANSPORT_SPAWN_OFFSET_Y = 120.0
+_ZOMBIE_GROUP_MARKER_SIZE_PX = 22
 
 _MAP_OBJECT_LAYOUT = (
     {
@@ -61,6 +64,9 @@ class UnitTypeSpec:
     type_id: str
     speed_kmph: float
     marker_size_px: int
+    armament_key: str = ""
+    attack: int = 0
+    defense: int = 0
     can_transport_supplies: bool = False
     supply_capacity: int = 0
 
@@ -78,6 +84,12 @@ class SupplyTransportTypeSpec:
     cargo: dict[str, int]
 
 
+@dataclass(frozen=True)
+class CommanderState:
+    name: str = ""
+    experience_level: str = "recruit"
+
+
 @dataclass
 class UnitState:
     unit_id: str
@@ -85,6 +97,14 @@ class UnitState:
     position: tuple[float, float]
     target: tuple[float, float] | None = None
     carried_resources: dict[str, int] = field(default_factory=dict)
+    name: str = ""
+    commander: CommanderState = field(default_factory=CommanderState)
+    experience_level: str = "recruit"
+    personnel: int = 0
+    morale: int = 0
+    ammo: int = 0
+    rations: int = 0
+    fuel: int = 0
 
 
 @dataclass
@@ -131,16 +151,30 @@ class SupplyRouteState:
     phase: str
 
 
+@dataclass
+class ZombieGroupState:
+    group_id: str
+    position: tuple[float, float]
+    name: str = ""
+    personnel: int = 0
+
+
 UNIT_TYPE_SPECS: dict[str, UnitTypeSpec] = {
     "infantry_squad": UnitTypeSpec(
         type_id="infantry_squad",
         speed_kmph=4.2,
         marker_size_px=18,
+        armament_key="game.unit.armament.rifles_lmg",
+        attack=4,
+        defense=5,
     ),
     _SUPPLY_CONVOY_UNIT_TYPE_ID: UnitTypeSpec(
         type_id=_SUPPLY_CONVOY_UNIT_TYPE_ID,
         speed_kmph=18.0,
         marker_size_px=20,
+        armament_key="game.unit.armament.apc_autocannon",
+        attack=7,
+        defense=8,
         can_transport_supplies=True,
         supply_capacity=24,
     ),
@@ -191,12 +225,14 @@ class GameSession:
         self._landing_pads: dict[str, LandingPadState] = {}
         self._supply_routes: dict[str, SupplyRouteState] = {}
         self._units: list[UnitState] = []
+        self._enemy_groups: list[ZombieGroupState] = []
         self._selected_unit_id: str | None = None
         self._units_initialized = False
         self._last_supply_update_at: float | None = None
 
     def reset(self) -> None:
         self._units = []
+        self._enemy_groups = []
         self._bases = {}
         self._landing_pads = {}
         self._supply_routes = {}
@@ -227,6 +263,7 @@ class GameSession:
                 unit.position = self._clamp_point_to_map(unit.position, unit_type_id=unit.unit_type_id)
                 if unit.target is not None:
                     unit.target = self._clamp_point_to_map(unit.target, unit_type_id=unit.unit_type_id)
+            self._clamp_enemy_groups_to_map()
             self._refresh_supply_route_targets()
 
     def tick(self) -> None:
@@ -306,6 +343,20 @@ class GameSession:
                 "position": unit.position,
                 "target": unit.target,
                 "marker_size_px": UNIT_TYPE_SPECS[unit.unit_type_id].marker_size_px,
+                "name": unit.name,
+                "commander": {
+                    "name": unit.commander.name,
+                    "experience_level": unit.commander.experience_level,
+                },
+                "experience_level": unit.experience_level,
+                "personnel": unit.personnel,
+                "armament_key": UNIT_TYPE_SPECS[unit.unit_type_id].armament_key,
+                "attack": UNIT_TYPE_SPECS[unit.unit_type_id].attack,
+                "defense": UNIT_TYPE_SPECS[unit.unit_type_id].defense,
+                "morale": unit.morale,
+                "ammo": unit.ammo,
+                "rations": unit.rations,
+                "fuel": unit.fuel,
                 "can_transport_supplies": UNIT_TYPE_SPECS[unit.unit_type_id].can_transport_supplies,
                 "supply_capacity": UNIT_TYPE_SPECS[unit.unit_type_id].supply_capacity,
                 "carried_supply_total": self._resource_total(unit.carried_resources),
@@ -333,6 +384,18 @@ class GameSession:
                 )
             )
         return tuple(snapshots)
+
+    def enemy_groups_snapshot(self) -> tuple[ZombieGroupSnapshot, ...]:
+        return tuple(
+            ZombieGroupSnapshot(
+                group_id=enemy_group.group_id,
+                position=enemy_group.position,
+                marker_size_px=_ZOMBIE_GROUP_MARKER_SIZE_PX,
+                name=enemy_group.name,
+                personnel=enemy_group.personnel,
+            )
+            for enemy_group in self._enemy_groups
+        )
 
     def landing_pads_snapshot(self) -> tuple[LandingPadSnapshot, ...]:
         snapshots: list[LandingPadSnapshot] = []
@@ -439,6 +502,17 @@ class GameSession:
                     position=unit["position"],  # pragma: no mutate
                     target=unit["target"],  # pragma: no mutate
                     marker_size_px=unit["marker_size_px"],  # pragma: no mutate
+                    name=unit["name"],  # pragma: no mutate
+                    commander=UnitCommanderSnapshot(**unit["commander"]),  # pragma: no mutate
+                    experience_level=unit["experience_level"],  # pragma: no mutate
+                    personnel=unit["personnel"],  # pragma: no mutate
+                    armament_key=unit["armament_key"],  # pragma: no mutate
+                    attack=unit["attack"],  # pragma: no mutate
+                    defense=unit["defense"],  # pragma: no mutate
+                    morale=unit["morale"],  # pragma: no mutate
+                    ammo=unit["ammo"],  # pragma: no mutate
+                    rations=unit["rations"],  # pragma: no mutate
+                    fuel=unit["fuel"],  # pragma: no mutate
                     can_transport_supplies=unit["can_transport_supplies"],  # pragma: no mutate
                     supply_capacity=unit["supply_capacity"],  # pragma: no mutate
                     carried_supply_total=unit["carried_supply_total"],  # pragma: no mutate
@@ -446,6 +520,7 @@ class GameSession:
                 )
                 for unit in self.units_snapshot()
             ),
+            enemy_groups=self.enemy_groups_snapshot(),  # pragma: no mutate
             selected_unit_id=self.selected_unit_id(),  # pragma: no mutate
             objective_definitions=tuple(  # pragma: no mutate
                 MissionObjectiveDefinitionSnapshot(
@@ -537,6 +612,7 @@ class GameSession:
 
     def _initialize_units(self) -> None:
         hq = next((obj for obj in self._map_objects if obj["id"] == "hq"), None)
+        landing_pad = next((obj for obj in self._map_objects if obj["id"] == "landing_pad"), None)
         if hq is None:
             return
 
@@ -547,16 +623,48 @@ class GameSession:
                 unit_id="alpha_infantry",
                 unit_type_id="infantry_squad",
                 position=(hq_center[0] - 22.0, hq_center[1] + 8.0),
+                name="1. Druzyna Alfa",
+                commander=CommanderState(name="por. Anna Sowa", experience_level="regular"),
+                experience_level="recruit",
+                personnel=10,
+                morale=72,
+                ammo=90,
+                rations=18,
+                fuel=0,
             ),
             UnitState(
                 unit_id="bravo_mechanized",
                 unit_type_id="mechanized_squad",
                 position=(hq_center[0] + 26.0, hq_center[1] + 8.0),
+                name="2. Sekcja Bravo",
+                commander=CommanderState(name="kpt. Marek Wolny", experience_level="veteran"),
+                experience_level="regular",
+                personnel=8,
+                morale=81,
+                ammo=120,
+                rations=24,
+                fuel=65,
             ),
         ]
+        if landing_pad is not None:
+            pad_left, pad_top, pad_right, pad_bottom = landing_pad["bounds"]
+            pad_center = ((pad_left + pad_right) / 2.0, (pad_top + pad_bottom) / 2.0)
+            self._enemy_groups = [
+                ZombieGroupState(
+                    group_id="zulu_zombies",
+                    position=pad_center,
+                    name="Mala grupa zombie",
+                    personnel=7,
+                ),
+            ]
         for unit in self._units:
             unit.position = self._clamp_point_to_map(unit.position, unit_type_id=unit.unit_type_id)
+        self._clamp_enemy_groups_to_map()
         self._units_initialized = True
+
+    def _clamp_enemy_groups_to_map(self) -> None:
+        for enemy_group in self._enemy_groups:
+            enemy_group.position = self._clamp_enemy_point_to_map(enemy_group.position)
 
     def _update_units_position(self) -> None:
         for unit in self._units:
@@ -863,6 +971,14 @@ class GameSession:
         bottom = top + size
         return (left, top, right, bottom)
 
+    def _enemy_group_bounds(self, enemy_group: ZombieGroupState) -> tuple[int, int, int, int]:
+        size = _ZOMBIE_GROUP_MARKER_SIZE_PX
+        left = int(enemy_group.position[0] - size / 2)
+        top = int(enemy_group.position[1] - size / 2)
+        right = left + size
+        bottom = top + size
+        return (left, top, right, bottom)
+
     def _clamp_point_to_map(  # pragma: no mutate
         self,
         position: tuple[float, float] | tuple[int, int],
@@ -874,6 +990,23 @@ class GameSession:
             return (float(position[0]), float(position[1]))
 
         half_size = UNIT_TYPE_SPECS[unit_type_id].marker_size_px / 2
+        min_x = half_size
+        max_x = width - half_size
+        min_y = half_size
+        max_y = height - half_size
+        clamped_x = min(max(float(position[0]), min_x), max_x)
+        clamped_y = min(max(float(position[1]), min_y), max_y)
+        return (clamped_x, clamped_y)
+
+    def _clamp_enemy_point_to_map(
+        self,
+        position: tuple[float, float] | tuple[int, int],
+    ) -> tuple[float, float]:
+        width, height = self._map_size
+        if width <= 0 or height <= 0:
+            return (float(position[0]), float(position[1]))
+
+        half_size = _ZOMBIE_GROUP_MARKER_SIZE_PX / 2
         min_x = half_size
         max_x = width - half_size
         min_y = half_size
