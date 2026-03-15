@@ -149,6 +149,10 @@ For dependency-related ADRs, explain at least:
 - adapt changes to the existing workflow style
 - if architecture tests are part of `pytest`, add them to the existing test step
 - if the repository has separate quality gates, integrate with them
+- before creating PR/MR, run locally every quality step defined in `.github/workflows/ci.yml`
+- run these CI/CD steps at the very end of work (after all code/doc changes), as the final validation pass
+- include in the final report a short command-by-command status for all executed CI/CD checks
+- do not claim CI parity if any required local step was skipped
 
 CI/CD changes should be minimal and consistent with the repository’s current setup.
 
@@ -177,7 +181,8 @@ For larger changes:
 5. run SCA/lint checks
 6. update documentation if needed
 7. determine whether an ADR is needed
-8. ensure CI/CD still validates what it should
+8. run all local steps mirrored from `.github/workflows/ci.yml` as the final gate before finishing
+9. ensure CI/CD still validates what it should
 
 ---
 
@@ -210,4 +215,4 @@ Before finishing work, check:
 - whether the README needs an update
 - whether an ADR is needed
 - whether CI/CD still validates everything it should
-- whether all CI/CD pipeline steps were executed locally by the agent before finishing work
+- whether all CI/CD pipeline steps from `.github/workflows/ci.yml` were executed locally by the agent before finishing work
