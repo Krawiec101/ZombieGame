@@ -3,7 +3,11 @@
 .pytest_cache
 .ruff_cache
 .coverage
+.codex-*
 .tmp-pip-audit
+.tmp-pip-audit-run
+.tmp-pytest-local
+pytest-temp-run-*
 tmps*
 __pycache__
 mutants

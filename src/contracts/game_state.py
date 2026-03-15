@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 type Bounds = tuple[int, int, int, int]
 type Position = tuple[float, float]
@@ -10,6 +10,21 @@ type Position = tuple[float, float]
 class MapObjectSnapshot:
     object_id: str
     bounds: Bounds
+
+
+@dataclass(frozen=True)
+class UnitCommanderSnapshot:
+    name: str = ""
+    experience_level: str = "recruit"
+
+
+@dataclass(frozen=True)
+class ZombieGroupSnapshot:
+    group_id: str
+    position: Position
+    marker_size_px: int
+    name: str = ""
+    personnel: int = 0
 
 
 @dataclass(frozen=True)
@@ -25,6 +40,17 @@ class UnitSnapshot:
     position: Position
     target: Position | None
     marker_size_px: int
+    name: str = ""
+    commander: UnitCommanderSnapshot = field(default_factory=UnitCommanderSnapshot)
+    experience_level: str = "recruit"
+    personnel: int = 0
+    armament_key: str = ""
+    attack: int = 0
+    defense: int = 0
+    morale: int = 0
+    ammo: int = 0
+    rations: int = 0
+    fuel: int = 0
     can_transport_supplies: bool = False
     supply_capacity: int = 0
     carried_supply_total: int = 0
@@ -98,6 +124,7 @@ class GameStateSnapshot:
     selected_unit_id: str | None
     objective_definitions: tuple[MissionObjectiveDefinitionSnapshot, ...]
     objective_progress: tuple[MissionObjectiveProgressSnapshot, ...]
+    enemy_groups: tuple[ZombieGroupSnapshot, ...] = ()
     roads: tuple[RoadSnapshot, ...] = ()
     landing_pads: tuple[LandingPadSnapshot, ...] = ()
     bases: tuple[BaseSnapshot, ...] = ()

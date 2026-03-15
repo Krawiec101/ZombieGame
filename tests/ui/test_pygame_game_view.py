@@ -15,7 +15,9 @@ from contracts.game_state import (
     RoadSnapshot,
     SupplyRouteSnapshot,
     SupplyTransportSnapshot,
+    UnitCommanderSnapshot,
     UnitSnapshot,
+    ZombieGroupSnapshot,
 )
 import ui.game_views.pygame_game_view as game_view_module
 
@@ -168,6 +170,17 @@ def _sample_game_state(*, objective_completed: bool = False) -> GameStateSnapsho
                 position=(210.0, 238.0),
                 target=None,
                 marker_size_px=18,
+                name="1. Druzyna Alfa",
+                commander=UnitCommanderSnapshot(name="por. Anna Sowa", experience_level="regular"),
+                experience_level="recruit",
+                personnel=10,
+                armament_key="game.unit.armament.rifles_lmg",
+                attack=4,
+                defense=5,
+                morale=72,
+                ammo=90,
+                rations=18,
+                fuel=0,
                 can_transport_supplies=False,
                 supply_capacity=0,
                 carried_supply_total=0,
@@ -179,10 +192,30 @@ def _sample_game_state(*, objective_completed: bool = False) -> GameStateSnapsho
                 position=(250.0, 238.0),
                 target=None,
                 marker_size_px=20,
+                name="2. Sekcja Bravo",
+                commander=UnitCommanderSnapshot(name="kpt. Marek Wolny", experience_level="veteran"),
+                experience_level="regular",
+                personnel=8,
+                armament_key="game.unit.armament.apc_autocannon",
+                attack=7,
+                defense=8,
+                morale=81,
+                ammo=120,
+                rations=24,
+                fuel=65,
                 can_transport_supplies=True,
                 supply_capacity=24,
                 carried_supply_total=0,
                 active_supply_route_id="bravo_mechanized:landing_pad->hq",
+            ),
+        ),
+        enemy_groups=(
+            ZombieGroupSnapshot(
+                group_id="zulu_zombies",
+                position=(736.0, 194.0),
+                marker_size_px=22,
+                name="Mala grupa zombie",
+                personnel=7,
             ),
         ),
         selected_unit_id="alpha_infantry",
@@ -297,6 +330,7 @@ def test_apply_game_state_updates_cached_state(game_view) -> None:
         "infantry_squad",
         "mechanized_squad",
     }
+    assert [enemy_group.group_id for enemy_group in game_view.view._enemy_groups] == ["zulu_zombies"]
     assert game_view.view._selected_unit_id == "alpha_infantry"
 
 
@@ -344,6 +378,35 @@ def test_render_shows_landing_pad_supply_details_in_tooltip(game_view) -> None:
     assert "game.map.object.landing_pad.resource_line" in texts
 
 
+def test_render_shows_unit_tooltip_when_hovering_over_unit(game_view) -> None:
+    game_view.view.apply_game_state(snapshot=_sample_game_state())
+    game_view.pygame.mouse.position = (210, 238)
+
+    game_view.view.render(character_name="", show_running_hint=False)
+
+    texts = _blitted_texts(game_view.screen)
+    assert "1. Druzyna Alfa" in texts
+    assert "game.unit.type.infantry_squad" in texts
+    assert "game.unit.commander" in texts
+    assert "game.unit.experience" in texts
+    assert "game.unit.morale" in texts
+    assert "game.unit.ammo" in texts
+    assert "game.map.object.hq.name" not in texts
+
+
+def test_render_shows_enemy_group_tooltip_when_hovering_over_zombies(game_view) -> None:
+    game_view.view.apply_game_state(snapshot=_sample_game_state())
+    game_view.pygame.mouse.position = (736, 194)
+
+    game_view.view.render(character_name="", show_running_hint=False)
+
+    texts = _blitted_texts(game_view.screen)
+    assert "Mala grupa zombie" in texts
+    assert "game.enemy_group.type.zombies" in texts
+    assert "game.enemy_group.personnel" in texts
+    assert "game.map.object.landing_pad.name" not in texts
+
+
 def test_render_draws_supply_transport_marker(game_view) -> None:
     game_view.view.apply_game_state(snapshot=_sample_game_state())
 
@@ -357,6 +420,17 @@ def test_render_draws_supply_transport_marker(game_view) -> None:
     assert helicopter_rects
     assert helicopter_rects[0].width == 30
     assert helicopter_rects[0].height == 12
+
+
+def test_render_draws_enemy_group_marker(game_view) -> None:
+    game_view.view.apply_game_state(snapshot=_sample_game_state())
+
+    game_view.view.render(character_name="", show_running_hint=False)
+
+    enemy_rects = [rect for color, rect in game_view.pygame.draw.rect_calls if color == (146, 74, 74)]
+    assert enemy_rects
+    assert enemy_rects[0].width == 22
+    assert enemy_rects[0].height == 22
 
 
 def test_render_draws_supply_route_marker(game_view) -> None:
@@ -464,6 +538,7 @@ def test_clear_game_state_clears_cached_state(game_view) -> None:
     assert game_view.view._supply_routes == []
     assert game_view.view._supply_transports == []
     assert game_view.view._units == []
+    assert game_view.view._enemy_groups == []
     assert game_view.view._selected_unit_id is None
 
 
