@@ -5,6 +5,8 @@ from typing import Any
 
 from contracts.game_state import (
     BaseSnapshot,
+    CombatNotificationSnapshot,
+    CombatSnapshot,
     GameStateSnapshot,
     LandingPadSnapshot,
     MapObjectSnapshot,
@@ -33,6 +35,14 @@ _ENEMY_GROUP_STYLE = {
     "fill": (146, 74, 74),
     "border": (64, 22, 22),
 }
+_COMBAT_ALERT_STYLE = {
+    "background": (36, 44, 29),
+    "border": (194, 163, 92),
+    "header": (228, 213, 169),
+    "text": (236, 232, 214),
+    "subtle": (174, 184, 162),
+}
+_COMBAT_MARKER_COLOR = (214, 124, 74)
 _UNIT_TYPE_TEXT_KEYS = {
     "infantry_squad": "game.unit.type.infantry_squad",
     "mechanized_squad": "game.unit.type.mechanized_squad",
@@ -89,6 +99,8 @@ class PygameGameView:
         self._supply_transports: list[SupplyTransportSnapshot] = []
         self._units: list[UnitSnapshot] = []
         self._enemy_groups: list[ZombieGroupSnapshot] = []
+        self._combats: list[CombatSnapshot] = []
+        self._combat_notifications: list[CombatNotificationSnapshot] = []
         self._selected_unit_id: str | None = None
         self._mission_objectives: tuple[MissionObjectiveDefinitionSnapshot, ...] = ()
         self._mission_objective_status: dict[str, bool] = {}
@@ -102,6 +114,8 @@ class PygameGameView:
         self._supply_transports = list(snapshot.supply_transports)
         self._units = list(snapshot.units)
         self._enemy_groups = list(snapshot.enemy_groups)
+        self._combats = list(snapshot.combats)
+        self._combat_notifications = list(snapshot.combat_notifications)
         self._selected_unit_id = snapshot.selected_unit_id
         self._mission_objectives = snapshot.objective_definitions
         self._mission_objective_status = {
@@ -118,6 +132,8 @@ class PygameGameView:
         self._supply_transports = []
         self._units = []
         self._enemy_groups = []
+        self._combats = []
+        self._combat_notifications = []
         self._selected_unit_id = None
         self._mission_objective_status = {
             objective.objective_id: False for objective in self._mission_objectives
@@ -140,6 +156,7 @@ class PygameGameView:
         self._draw_enemy_groups()
         self._draw_units()
         self._draw_mission_objectives_panel()
+        self._draw_combat_alerts()
 
         if supply_route_planning is not None:
             self._draw_supply_route_planning_overlay(supply_route_planning)
@@ -306,6 +323,14 @@ class PygameGameView:
                     unit_rect.height + 10,
                 )
                 pygame.draw.rect(self._screen, (234, 224, 170), selected_rect, 2, border_radius=8)
+            if unit.is_in_combat:
+                combat_rect = pygame.Rect(
+                    unit_rect.left - 8,
+                    unit_rect.top - 8,
+                    unit_rect.width + 16,
+                    unit_rect.height + 16,
+                )
+                pygame.draw.rect(self._screen, _COMBAT_MARKER_COLOR, combat_rect, 3, border_radius=9)
 
     def _draw_enemy_groups(self) -> None:
         pygame = self._pygame
@@ -361,6 +386,63 @@ class PygameGameView:
                     1,
                 )
             y += surface.get_height() + line_gap
+
+    def _draw_combat_alerts(self) -> None:
+        if not self._combat_notifications:
+            return
+
+        pygame = self._pygame
+        screen_width, _screen_height = self._screen.get_size()
+        padding = 10
+        line_gap = 4
+        panel_width = 280
+        current_top = 12
+
+        for notification in self._combat_notifications:
+            header_surface = self._font_hint.render(
+                text("game.combat.alert.header"),
+                True,
+                _COMBAT_ALERT_STYLE["header"],
+            )
+            unit_surface = self._font_hint.render(
+                notification.unit_name,
+                True,
+                _COMBAT_ALERT_STYLE["text"],
+            )
+            action_key = (
+                "game.combat.alert.action.started"
+                if notification.phase == "started"
+                else "game.combat.alert.action.ended"
+            )
+            action_surface = self._font_hint.render(
+                text(
+                    action_key,
+                    enemy_name=notification.enemy_group_name,
+                    seconds=notification.seconds_remaining,
+                ),
+                True,
+                _COMBAT_ALERT_STYLE["subtle"],
+            )
+
+            panel_height = (
+                padding * 2
+                + header_surface.get_height()
+                + unit_surface.get_height()
+                + action_surface.get_height()
+                + line_gap * 2
+            )
+            panel_rect = pygame.Rect(screen_width - panel_width - 12, current_top, panel_width, panel_height)
+            pygame.draw.rect(self._screen, _COMBAT_ALERT_STYLE["background"], panel_rect, border_radius=8)
+            pygame.draw.rect(self._screen, _COMBAT_ALERT_STYLE["border"], panel_rect, 2, border_radius=8)
+
+            line_left = panel_rect.left + padding
+            line_top = panel_rect.top + padding
+            self._screen.blit(header_surface, (line_left, line_top))
+            line_top += header_surface.get_height() + line_gap
+            self._screen.blit(unit_surface, (line_left, line_top))
+            line_top += unit_surface.get_height() + line_gap
+            self._screen.blit(action_surface, (line_left, line_top))
+            current_top += panel_height + 10
 
     def _get_unit_rect(self, unit: UnitSnapshot | None = None) -> Any:
         pygame = self._pygame
@@ -579,6 +661,7 @@ class PygameGameView:
                 _UNIT_TYPE_TEXT_KEYS.get(unit.unit_type_id, "game.unit.type.unknown")
             ),
             "detail_lines": (
+                *self._combat_detail_lines_for_unit(unit),
                 text(
                     "game.unit.commander",
                     name=unit.commander.name,
@@ -604,9 +687,22 @@ class PygameGameView:
             "title": enemy_group.name or enemy_group.group_id,
             "description": text("game.enemy_group.type.zombies"),
             "detail_lines": (
+                text("game.enemy_group.status.engaged")
+                if enemy_group.is_in_combat
+                else text("game.enemy_group.status.idle"),
                 text("game.enemy_group.personnel", value=enemy_group.personnel),
             ),
         }
+
+    def _combat_detail_lines_for_unit(self, unit: UnitSnapshot) -> tuple[str, ...]:
+        if not unit.is_in_combat:
+            return ()
+        return (
+            text(
+                "game.unit.status.engaged",
+                seconds=unit.combat_seconds_remaining or 0,
+            ),
+        )
 
     def _base_detail_lines(self, base: BaseSnapshot) -> tuple[str, ...]:
         lines = [

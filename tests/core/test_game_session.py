@@ -4,6 +4,8 @@ import math
 
 from contracts.game_state import (
     BaseSnapshot,
+    CombatNotificationSnapshot,
+    CombatSnapshot,
     GameStateSnapshot,
     LandingPadResourceSnapshot,
     LandingPadSnapshot,
@@ -17,11 +19,14 @@ from contracts.game_state import (
 from core.game_session import (
     SUPPLY_TRANSPORT_TYPE_SPECS,
     BaseState,
+    CombatState,
+    CombatNotificationState,
     UNIT_TYPE_SPECS,
     LandingPadState,
     SupplyRouteState,
     SupplyTransportState,
     UnitState,
+    ZombieGroupState,
     create_default_game_session,
 )
 
@@ -478,6 +483,7 @@ def test_supply_route_moves_motorized_unit_and_transfers_supply_to_hq() -> None:
     clock.advance(6)
     session.tick()
 
+    session._enemy_groups = []
     motorized = _unit_by_id(session.units_snapshot(), "bravo_mechanized")
     session.handle_left_click(_unit_center(motorized))
     session.handle_supply_route(source_object_id="landing_pad", destination_object_id="hq")
@@ -736,6 +742,8 @@ def test_units_snapshot_contains_expected_keys_marker_sizes_and_targets() -> Non
             "supply_capacity",
             "carried_supply_total",
             "active_supply_route_id",
+            "is_in_combat",
+            "combat_seconds_remaining",
         }
         assert unit["marker_size_px"] == UNIT_TYPE_SPECS[unit["unit_type_id"]].marker_size_px
 
@@ -755,6 +763,8 @@ def test_units_snapshot_contains_expected_keys_marker_sizes_and_targets() -> Non
     assert updated_infantry["ammo"] == 90
     assert updated_infantry["rations"] == 18
     assert updated_infantry["fuel"] == 0
+    assert updated_infantry["is_in_combat"] is False
+    assert updated_infantry["combat_seconds_remaining"] is None
     assert updated_infantry["can_transport_supplies"] is False
     assert updated_infantry["supply_capacity"] == 0
     assert updated_infantry["carried_supply_total"] == 0
@@ -1765,6 +1775,16 @@ def test_consume_supply_elapsed_seconds_clamps_negative_elapsed_and_updates_time
     assert session._last_supply_update_at == 5.0
 
 
+def test_consume_combat_elapsed_seconds_clamps_negative_elapsed_and_updates_timestamp() -> None:
+    clock = _FakeClock(start=10.0)
+    session = create_default_game_session(time_provider=clock.now)
+
+    assert session._consume_combat_elapsed_seconds() == 0.0
+    clock.current = 5.0
+    assert session._consume_combat_elapsed_seconds() == 0.0
+    assert session._last_combat_update_at == 5.0
+
+
 def test_update_landing_pad_supply_clears_unsecured_transport_state() -> None:
     session = create_default_game_session()
     landing_pad = LandingPadState(
@@ -2532,6 +2552,336 @@ def test_enemy_group_starts_on_landing_pad_center() -> None:
     enemy_group = _enemy_group_snapshot(session)
 
     assert enemy_group.position == ((left + right) / 2.0, (top + bottom) / 2.0)
+
+
+def test_collision_with_enemy_starts_combat_and_exposes_alert_snapshot() -> None:
+    session = create_default_game_session()
+    session.update_map_dimensions(width=960, height=640)
+    session.tick()
+    motorized = session._find_unit_by_id("bravo_mechanized")
+    enemy_group = session._find_enemy_group_by_id("zulu_zombies")
+
+    assert motorized is not None
+    assert enemy_group is not None
+
+    motorized.position = enemy_group.position
+    motorized.target = (120.0, 120.0)
+    motorized.path = ((120.0, 120.0),)
+
+    session.tick()
+
+    snapshot = session.snapshot()
+    motorized_snapshot = next(unit for unit in snapshot.units if unit.unit_id == "bravo_mechanized")
+
+    assert snapshot.combats == (
+        CombatSnapshot(
+            combat_id="bravo_mechanized:zulu_zombies",
+            unit_id="bravo_mechanized",
+            unit_name="2. Sekcja Bravo",
+            enemy_group_id="zulu_zombies",
+            enemy_group_name="Mala grupa zombie",
+            seconds_remaining=24,
+        ),
+    )
+    assert snapshot.combat_notifications == (
+        CombatNotificationSnapshot(
+            notification_id="bravo_mechanized:zulu_zombies:started",
+            unit_name="2. Sekcja Bravo",
+            enemy_group_name="Mala grupa zombie",
+            phase="started",
+            seconds_remaining=12,
+        ),
+    )
+    assert motorized_snapshot.is_in_combat is True
+    assert motorized_snapshot.combat_seconds_remaining == 24
+    assert snapshot.enemy_groups[0].is_in_combat is True
+
+
+def test_active_combat_stops_unit_movement_until_enemy_group_is_cleared() -> None:
+    clock = _FakeClock()
+    session = create_default_game_session(time_provider=clock.now)
+    session.update_map_dimensions(width=960, height=640)
+    session.tick()
+    infantry = session._find_unit_by_id("alpha_infantry")
+    enemy_group = session._find_enemy_group_by_id("zulu_zombies")
+
+    assert infantry is not None
+    assert enemy_group is not None
+
+    infantry.position = enemy_group.position
+    infantry.target = (120.0, 120.0)
+    infantry.path = ((120.0, 120.0),)
+
+    session.tick()
+    locked_position = infantry.position
+
+    clock.advance(5)
+    session.tick()
+
+    assert infantry.position == locked_position
+    assert session.combats_snapshot()[0].seconds_remaining == 37
+
+    for _ in range(12):
+        clock.advance(6)
+        session.tick()
+        if session.combats_snapshot() == ():
+            break
+
+    assert session.combats_snapshot() == ()
+    assert session.enemy_groups_snapshot() == ()
+
+
+def test_start_combats_does_not_assign_enemy_group_to_second_unit_when_already_engaged() -> None:
+    session = create_default_game_session()
+    session.update_map_dimensions(width=960, height=640)
+    session.tick()
+    alpha = session._find_unit_by_id("alpha_infantry")
+    bravo = session._find_unit_by_id("bravo_mechanized")
+    enemy_group = session._find_enemy_group_by_id("zulu_zombies")
+
+    assert alpha is not None
+    assert bravo is not None
+    assert enemy_group is not None
+
+    alpha.position = enemy_group.position
+    bravo.position = enemy_group.position
+    session._combats = {
+        "alpha_infantry:zulu_zombies": CombatState(
+            combat_id="alpha_infantry:zulu_zombies",
+            unit_id="alpha_infantry",
+            enemy_group_id="zulu_zombies",
+            seconds_remaining=24.0,
+            total_seconds=24.0,
+            seconds_until_next_exchange=6.0,
+        )
+    }
+
+    session._start_combats_for_colliding_units()
+
+    assert tuple(sorted(session._combats)) == ("alpha_infantry:zulu_zombies",)
+
+
+def test_update_combats_continues_after_none_placeholder_and_updates_real_combat() -> None:
+    session = create_default_game_session()
+    unit = UnitState(unit_id="u1", unit_type_id="infantry_squad", position=(50.0, 50.0), ammo=30, morale=20)
+    enemy_group = ZombieGroupState(group_id="e1", position=(50.0, 50.0), personnel=5)
+    session._units = [unit]
+    session._enemy_groups = [enemy_group]
+    session._combats = {
+        "a_placeholder": None,  # type: ignore[dict-item]
+        "z_real": CombatState(
+            combat_id="z_real",
+            unit_id="u1",
+            enemy_group_id="e1",
+            seconds_remaining=24.0,
+            total_seconds=24.0,
+            seconds_until_next_exchange=6.0,
+        ),
+    }
+
+    session._update_combats(elapsed_seconds=8.0)
+
+    real_combat = session._combats["z_real"]
+    assert isinstance(real_combat, CombatState)
+    assert real_combat.seconds_remaining == 16.0
+    assert real_combat.seconds_until_next_exchange == 4.0
+
+
+def test_update_combats_removes_stale_combat_when_unit_or_enemy_disappears() -> None:
+    session = create_default_game_session()
+    session._combats = {
+        "missing": CombatState(
+            combat_id="missing",
+            unit_id="ghost_unit",
+            enemy_group_id="ghost_enemy",
+            seconds_remaining=24.0,
+            total_seconds=24.0,
+            seconds_until_next_exchange=6.0,
+        )
+    }
+
+    session._update_combats(elapsed_seconds=4.0)
+
+    assert session._combats == {}
+
+
+def test_update_combats_resolves_on_enemy_elimination_even_when_time_remains() -> None:
+    session = create_default_game_session()
+    unit = UnitState(
+        unit_id="u1",
+        unit_type_id="mechanized_squad",
+        position=(50.0, 50.0),
+        ammo=40,
+        morale=12,
+    )
+    enemy_group = ZombieGroupState(group_id="e1", position=(50.0, 50.0), personnel=1)
+    session._units = [unit]
+    session._enemy_groups = [enemy_group]
+    session._combats = {
+        "engagement": CombatState(
+            combat_id="engagement",
+            unit_id="u1",
+            enemy_group_id="e1",
+            seconds_remaining=24.0,
+            total_seconds=24.0,
+            seconds_until_next_exchange=1.0,
+        )
+    }
+
+    session._update_combats(elapsed_seconds=1.0)
+
+    assert session._combats == {}
+    assert session._enemy_groups == []
+    assert session.combat_notifications_snapshot() == (
+        CombatNotificationSnapshot(
+            notification_id="engagement:ended",
+            unit_name="u1",
+            enemy_group_name="e1",
+            phase="ended",
+            seconds_remaining=12,
+        ),
+    )
+
+
+def test_update_combats_keeps_engagement_active_when_enemy_survives_and_timer_stays_above_zero() -> None:
+    session = create_default_game_session()
+    unit = UnitState(
+        unit_id="u1",
+        unit_type_id="infantry_squad",
+        position=(50.0, 50.0),
+        ammo=40,
+        morale=20,
+    )
+    enemy_group = ZombieGroupState(group_id="e1", position=(50.0, 50.0), personnel=10)
+    session._units = [unit]
+    session._enemy_groups = [enemy_group]
+    session._combats = {
+        "engagement": CombatState(
+            combat_id="engagement",
+            unit_id="u1",
+            enemy_group_id="e1",
+            seconds_remaining=10.0,
+            total_seconds=24.0,
+            seconds_until_next_exchange=6.0,
+        )
+    }
+
+    session._update_combats(elapsed_seconds=8.0)
+
+    combat = session._combats["engagement"]
+    assert combat.seconds_remaining == 2.0
+    assert session._enemy_groups[0].personnel == 9
+    assert combat.seconds_until_next_exchange == 2.0
+
+
+def test_update_combats_applies_final_exchange_when_timer_hits_zero_on_exchange_boundary() -> None:
+    session = create_default_game_session()
+    unit = UnitState(
+        unit_id="u1",
+        unit_type_id="mechanized_squad",
+        position=(50.0, 50.0),
+        ammo=40,
+        morale=12,
+    )
+    enemy_group = ZombieGroupState(group_id="e1", position=(50.0, 50.0), personnel=2)
+    session._units = [unit]
+    session._enemy_groups = [enemy_group]
+    session._combats = {
+        "engagement": CombatState(
+            combat_id="engagement",
+            unit_id="u1",
+            enemy_group_id="e1",
+            seconds_remaining=6.0,
+            total_seconds=24.0,
+            seconds_until_next_exchange=6.0,
+        )
+    }
+
+    session._update_combats(elapsed_seconds=6.0)
+
+    assert session._combats == {}
+    assert session._enemy_groups == []
+    assert unit.ammo == 26
+    assert unit.morale == 11
+    assert session.combat_notifications_snapshot() == (
+        CombatNotificationSnapshot(
+            notification_id="engagement:ended",
+            unit_name="u1",
+            enemy_group_name="e1",
+            phase="ended",
+            seconds_remaining=12,
+        ),
+    )
+
+
+def test_combat_notifications_expire_after_display_window() -> None:
+    session = create_default_game_session()
+    session._combat_notifications = [
+        CombatNotificationState(
+            notification_id="notice",
+            unit_name="alpha",
+            enemy_group_name="zulu",
+            phase="started",
+            seconds_remaining=3.0,
+        )
+    ]
+
+    session._update_combat_notifications(elapsed_seconds=1.0)
+    assert session.combat_notifications_snapshot() == (
+        CombatNotificationSnapshot(
+            notification_id="notice",
+            unit_name="alpha",
+            enemy_group_name="zulu",
+            phase="started",
+            seconds_remaining=2,
+        ),
+    )
+
+    session._update_combat_notifications(elapsed_seconds=2.5)
+    assert session.combat_notifications_snapshot() == ()
+
+
+def test_apply_combat_attrition_uses_expected_suppression_for_infantry_and_mechanized_units() -> None:
+    session = create_default_game_session()
+    infantry = UnitState(
+        unit_id="alpha",
+        unit_type_id="infantry_squad",
+        position=(0.0, 0.0),
+        ammo=90,
+        morale=72,
+    )
+    infantry_enemy = ZombieGroupState(group_id="e1", position=(0.0, 0.0), personnel=7)
+
+    session._apply_combat_attrition(infantry, infantry_enemy)
+
+    assert infantry_enemy.personnel == 6
+    assert infantry.ammo == 82
+    assert infantry.morale == 70
+
+    mechanized = UnitState(
+        unit_id="bravo",
+        unit_type_id="mechanized_squad",
+        position=(0.0, 0.0),
+        ammo=120,
+        morale=81,
+    )
+    mechanized_enemy = ZombieGroupState(group_id="e2", position=(0.0, 0.0), personnel=7)
+
+    session._apply_combat_attrition(mechanized, mechanized_enemy)
+
+    assert mechanized_enemy.personnel == 5
+    assert mechanized.ammo == 106
+    assert mechanized.morale == 80
+
+
+def test_bounds_overlap_requires_axis_overlap_in_each_direction() -> None:
+    session = create_default_game_session()
+
+    assert session._bounds_overlap((0, 0, 10, 10), (5, 5, 15, 15)) is True
+    assert session._bounds_overlap((0, 0, 10, 10), (11, 0, 20, 10)) is False
+    assert session._bounds_overlap((11, 0, 20, 10), (0, 0, 10, 10)) is False
+    assert session._bounds_overlap((0, 0, 10, 10), (0, 11, 10, 20)) is False
+    assert session._bounds_overlap((0, 11, 10, 20), (0, 0, 10, 10)) is False
 
 
 def test_refresh_supply_route_removes_route_when_required_objects_disappear() -> None:

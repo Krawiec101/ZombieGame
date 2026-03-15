@@ -25,6 +25,7 @@ class ZombieGroupSnapshot:
     marker_size_px: int
     name: str = ""
     personnel: int = 0
+    is_in_combat: bool = False
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,27 @@ class UnitSnapshot:
     supply_capacity: int = 0
     carried_supply_total: int = 0
     active_supply_route_id: str | None = None
+    is_in_combat: bool = False
+    combat_seconds_remaining: int | None = None
+
+
+@dataclass(frozen=True)
+class CombatSnapshot:
+    combat_id: str
+    unit_id: str
+    unit_name: str
+    enemy_group_id: str
+    enemy_group_name: str
+    seconds_remaining: int
+
+
+@dataclass(frozen=True)
+class CombatNotificationSnapshot:
+    notification_id: str
+    unit_name: str
+    enemy_group_name: str
+    phase: str
+    seconds_remaining: int
 
 
 @dataclass(frozen=True)
@@ -130,3 +152,5 @@ class GameStateSnapshot:
     bases: tuple[BaseSnapshot, ...] = ()
     supply_transports: tuple[SupplyTransportSnapshot, ...] = ()
     supply_routes: tuple[SupplyRouteSnapshot, ...] = ()
+    combats: tuple[CombatSnapshot, ...] = ()
+    combat_notifications: tuple[CombatNotificationSnapshot, ...] = ()

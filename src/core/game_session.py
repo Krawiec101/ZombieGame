@@ -8,7 +8,9 @@ from typing import Any
 
 from contracts.game_state import (
     BaseSnapshot,
+    CombatNotificationSnapshot,
     GameStateSnapshot,
+    CombatSnapshot,
     LandingPadResourceSnapshot,
     LandingPadSnapshot,
     MapObjectSnapshot,
@@ -32,6 +34,10 @@ _SUPPLY_INTERVAL_SECONDS = 45.0
 _SUPPLY_APPROACH_SECONDS = 6.0
 _SUPPLY_UNLOAD_SECONDS = 14.0
 _SUPPLY_DEPARTURE_SECONDS = 6.0
+_COMBAT_MIN_DURATION_SECONDS = 24.0
+_COMBAT_MAX_DURATION_SECONDS = 60.0
+_COMBAT_EXCHANGE_INTERVAL_SECONDS = 6.0
+_COMBAT_NOTIFICATION_DURATION_SECONDS = 12.0
 _SUPPLY_RESOURCE_ORDER = ("fuel", "mre", "ammo")
 _BASE_SUPPLY_CAPACITY = 120
 _SUPPLY_CONVOY_UNIT_TYPE_ID = "mechanized_squad"
@@ -163,6 +169,25 @@ class ZombieGroupState:
     personnel: int = 0
 
 
+@dataclass
+class CombatState:
+    combat_id: str
+    unit_id: str
+    enemy_group_id: str
+    seconds_remaining: float
+    total_seconds: float
+    seconds_until_next_exchange: float
+
+
+@dataclass
+class CombatNotificationState:
+    notification_id: str
+    unit_name: str
+    enemy_group_name: str
+    phase: str
+    seconds_remaining: float
+
+
 UNIT_TYPE_SPECS: dict[str, UnitTypeSpec] = {
     "infantry_squad": UnitTypeSpec(
         type_id="infantry_squad",
@@ -231,9 +256,12 @@ class GameSession:
         self._supply_routes: dict[str, SupplyRouteState] = {}
         self._units: list[UnitState] = []
         self._enemy_groups: list[ZombieGroupState] = []
+        self._combats: dict[str, CombatState] = {}
+        self._combat_notifications: list[CombatNotificationState] = []
         self._selected_unit_id: str | None = None
         self._units_initialized = False
         self._last_supply_update_at: float | None = None
+        self._last_combat_update_at: float | None = None
 
     def reset(self) -> None:
         self._units = []
@@ -243,8 +271,11 @@ class GameSession:
         self._landing_pads = {}
         self._supply_routes = {}
         self._selected_unit_id = None
+        self._combats = {}
+        self._combat_notifications = []
         self._units_initialized = False
         self._last_supply_update_at = None
+        self._last_combat_update_at = None
         self._objective_status = {
             definition["objective_id"]: False for definition in self._objective_definitions
         }
@@ -282,7 +313,11 @@ class GameSession:
 
     def tick(self) -> None:
         elapsed_supply_seconds = self._consume_supply_elapsed_seconds()
+        elapsed_combat_seconds = self._consume_combat_elapsed_seconds()
+        self._update_combat_notifications(elapsed_seconds=elapsed_combat_seconds)
+        self._update_combats(elapsed_seconds=elapsed_combat_seconds)
         self._update_units_position()
+        self._start_combats_for_colliding_units()
         self._objective_status = self._mission_objectives_evaluator.evaluate(
             units=self.units_snapshot(),
             map_objects=self.map_objects_snapshot(),
@@ -389,6 +424,10 @@ class GameSession:
                 "supply_capacity": UNIT_TYPE_SPECS[unit.unit_type_id].supply_capacity,
                 "carried_supply_total": self._resource_total(unit.carried_resources),
                 "active_supply_route_id": self._supply_route_id_for_unit(unit.unit_id),  # pragma: no mutate
+                "is_in_combat": self._combat_for_unit(unit.unit_id) is not None,
+                "combat_seconds_remaining": self._display_seconds(
+                    self._combat_seconds_remaining_for_unit(unit.unit_id)
+                ),
             }
             for unit in self._units
         ]
@@ -421,8 +460,41 @@ class GameSession:
                 marker_size_px=_ZOMBIE_GROUP_MARKER_SIZE_PX,
                 name=enemy_group.name,
                 personnel=enemy_group.personnel,
+                is_in_combat=self._combat_for_enemy_group(enemy_group.group_id) is not None,
             )
             for enemy_group in self._enemy_groups
+        )
+
+    def combats_snapshot(self) -> tuple[CombatSnapshot, ...]:
+        snapshots: list[CombatSnapshot] = []
+        for combat_id in sorted(self._combats):
+            combat = self._combats[combat_id]
+            unit = self._find_unit_by_id(combat.unit_id)
+            enemy_group = self._find_enemy_group_by_id(combat.enemy_group_id)
+            if unit is None or enemy_group is None:
+                continue
+            snapshots.append(
+                CombatSnapshot(
+                    combat_id=combat.combat_id,
+                    unit_id=unit.unit_id,
+                    unit_name=unit.name or unit.unit_id,
+                    enemy_group_id=enemy_group.group_id,
+                    enemy_group_name=enemy_group.name or enemy_group.group_id,
+                    seconds_remaining=self._display_seconds(combat.seconds_remaining) or 0,
+                )
+            )
+        return tuple(snapshots)
+
+    def combat_notifications_snapshot(self) -> tuple[CombatNotificationSnapshot, ...]:
+        return tuple(
+            CombatNotificationSnapshot(
+                notification_id=notification.notification_id,
+                unit_name=notification.unit_name,
+                enemy_group_name=notification.enemy_group_name,
+                phase=notification.phase,
+                seconds_remaining=self._display_seconds(notification.seconds_remaining) or 0,
+            )
+            for notification in reversed(self._combat_notifications)
         )
 
     def landing_pads_snapshot(self) -> tuple[LandingPadSnapshot, ...]:
@@ -546,6 +618,8 @@ class GameSession:
                     supply_capacity=unit["supply_capacity"],  # pragma: no mutate
                     carried_supply_total=unit["carried_supply_total"],  # pragma: no mutate
                     active_supply_route_id=unit["active_supply_route_id"],  # pragma: no mutate
+                    is_in_combat=unit["is_in_combat"],  # pragma: no mutate
+                    combat_seconds_remaining=unit["combat_seconds_remaining"],  # pragma: no mutate
                 )
                 for unit in self.units_snapshot()
             ),
@@ -563,6 +637,8 @@ class GameSession:
             bases=self.bases_snapshot(),  # pragma: no mutate
             supply_transports=self.supply_transports_snapshot(),  # pragma: no mutate
             supply_routes=self.supply_routes_snapshot(),  # pragma: no mutate
+            combats=self.combats_snapshot(),  # pragma: no mutate
+            combat_notifications=self.combat_notifications_snapshot(),  # pragma: no mutate
         )
 
     def _build_map_objects(self, width: int, height: int) -> list[dict[str, Any]]:
@@ -780,8 +856,74 @@ class GameSession:
         for enemy_group in self._enemy_groups:
             enemy_group.position = self._clamp_enemy_point_to_map(enemy_group.position)
 
+    def _update_combats(self, *, elapsed_seconds: float) -> None:
+        for combat_id in list(sorted(self._combats)):
+            combat = self._combats.get(combat_id)
+            if combat is None:
+                continue
+
+            unit = self._find_unit_by_id(combat.unit_id)
+            enemy_group = self._find_enemy_group_by_id(combat.enemy_group_id)
+            if unit is None or enemy_group is None:
+                self._combats.pop(combat_id, None)
+                continue
+
+            remaining_elapsed = max(0.0, elapsed_seconds)
+            while remaining_elapsed > 0.0:
+                step_seconds = min(
+                    remaining_elapsed,
+                    combat.seconds_remaining,
+                    combat.seconds_until_next_exchange,
+                )
+                combat.seconds_remaining = max(0.0, combat.seconds_remaining - step_seconds)
+                combat.seconds_until_next_exchange = max(0.0, combat.seconds_until_next_exchange - step_seconds)
+                remaining_elapsed -= step_seconds
+
+                if combat.seconds_until_next_exchange <= 0.0:
+                    self._apply_combat_attrition(unit, enemy_group)
+                    if enemy_group.personnel <= 0:
+                        self._resolve_combat(combat)
+                        break
+                    if combat.seconds_remaining > 0.0:
+                        combat.seconds_until_next_exchange = min(
+                            _COMBAT_EXCHANGE_INTERVAL_SECONDS,
+                            combat.seconds_remaining,
+                        )
+
+                if combat.seconds_remaining <= 0.0:
+                    self._resolve_combat(combat)
+                    break
+
+                if step_seconds <= 0.0:
+                    break
+
+    def _update_combat_notifications(self, *, elapsed_seconds: float) -> None:
+        if elapsed_seconds <= 0.0:
+            return
+        updated_notifications: list[CombatNotificationState] = []
+        for notification in self._combat_notifications:
+            notification.seconds_remaining = max(0.0, notification.seconds_remaining - elapsed_seconds)
+            if notification.seconds_remaining > 0.0:
+                updated_notifications.append(notification)
+        self._combat_notifications = updated_notifications
+
+    def _start_combats_for_colliding_units(self) -> None:
+        for enemy_group in self._enemy_groups:
+            if self._combat_for_enemy_group(enemy_group.group_id) is not None:
+                continue
+
+            for unit in self._units:
+                if self._combat_for_unit(unit.unit_id) is not None:
+                    continue
+                if not self._bounds_overlap(self._unit_bounds(unit), self._enemy_group_bounds(enemy_group)):
+                    continue
+                self._start_combat(unit, enemy_group)
+                break
+
     def _update_units_position(self) -> None:
         for unit in self._units:
+            if self._combat_for_unit(unit.unit_id) is not None:
+                continue
             if unit.target is None:
                 continue
 
@@ -808,6 +950,78 @@ class GameSession:
             moved_x = current_x + delta_x * step
             moved_y = current_y + delta_y * step
             unit.position = self._clamp_point_to_map((moved_x, moved_y), unit_type_id=unit.unit_type_id)
+
+    def _start_combat(self, unit: UnitState, enemy_group: ZombieGroupState) -> None:
+        duration_seconds = self._combat_duration_seconds(unit, enemy_group)
+        combat = CombatState(
+            combat_id=f"{unit.unit_id}:{enemy_group.group_id}",
+            unit_id=unit.unit_id,
+            enemy_group_id=enemy_group.group_id,
+            seconds_remaining=duration_seconds,
+            total_seconds=duration_seconds,
+            seconds_until_next_exchange=min(_COMBAT_EXCHANGE_INTERVAL_SECONDS, duration_seconds),
+        )
+        self._combats[combat.combat_id] = combat
+        self._push_combat_notification(
+            notification_id=f"{combat.combat_id}:started",
+            unit_name=unit.name or unit.unit_id,
+            enemy_group_name=enemy_group.name or enemy_group.group_id,
+            phase="started",
+        )
+        unit.position = self._clamp_point_to_map(unit.position, unit_type_id=unit.unit_type_id)
+
+    def _combat_duration_seconds(self, unit: UnitState, enemy_group: ZombieGroupState) -> float:
+        enemy_strength = max(1, int(enemy_group.personnel))
+        suppression = max(1, int(UNIT_TYPE_SPECS[unit.unit_type_id].attack) // 3)
+        expected_exchanges = math.ceil(enemy_strength / suppression)
+        return min(
+            _COMBAT_MAX_DURATION_SECONDS,
+            max(_COMBAT_MIN_DURATION_SECONDS, float(expected_exchanges * _COMBAT_EXCHANGE_INTERVAL_SECONDS)),
+        )
+
+    def _apply_combat_attrition(self, unit: UnitState, enemy_group: ZombieGroupState) -> None:
+        suppression = max(1, int(UNIT_TYPE_SPECS[unit.unit_type_id].attack) // 3)
+        enemy_group.personnel = max(0, enemy_group.personnel - suppression)
+        unit.ammo = max(0, unit.ammo - max(4, UNIT_TYPE_SPECS[unit.unit_type_id].attack * 2))
+        unit.morale = max(0, unit.morale - max(1, math.ceil(enemy_group.personnel / 5)))
+
+    def _resolve_combat(self, combat: CombatState) -> None:
+        self._combats.pop(combat.combat_id, None)
+        unit = self._find_unit_by_id(combat.unit_id)
+        enemy_group = self._find_enemy_group_by_id(combat.enemy_group_id)
+        if unit is not None and enemy_group is not None:
+            self._push_combat_notification(
+                notification_id=f"{combat.combat_id}:ended",
+                unit_name=unit.name or unit.unit_id,
+                enemy_group_name=enemy_group.name or enemy_group.group_id,
+                phase="ended",
+            )
+        if enemy_group is None:
+            return
+        self._enemy_groups = [
+            active_enemy_group
+            for active_enemy_group in self._enemy_groups
+            if active_enemy_group.group_id != enemy_group.group_id
+        ]
+
+    def _push_combat_notification(
+        self,
+        *,
+        notification_id: str,
+        unit_name: str,
+        enemy_group_name: str,
+        phase: str,
+    ) -> None:
+        self._combat_notifications.append(
+            CombatNotificationState(
+                notification_id=notification_id,
+                unit_name=unit_name,
+                enemy_group_name=enemy_group_name,
+                phase=phase,
+                seconds_remaining=_COMBAT_NOTIFICATION_DURATION_SECONDS,
+            )
+        )
+        self._combat_notifications = self._combat_notifications[-6:]
 
     def _set_unit_target(
         self,
@@ -903,6 +1117,15 @@ class GameSession:
             return 0.0
         elapsed_seconds = max(0.0, now - self._last_supply_update_at)
         self._last_supply_update_at = now
+        return elapsed_seconds
+
+    def _consume_combat_elapsed_seconds(self) -> float:
+        now = float(self._time_provider())
+        if self._last_combat_update_at is None:
+            self._last_combat_update_at = now
+            return 0.0
+        elapsed_seconds = max(0.0, now - self._last_combat_update_at)
+        self._last_combat_update_at = now
         return elapsed_seconds
 
     def _update_supply_network(self, *, elapsed_seconds: float) -> None:
@@ -1180,6 +1403,30 @@ class GameSession:
                 return unit
         return None
 
+    def _find_enemy_group_by_id(self, group_id: str) -> ZombieGroupState | None:
+        for enemy_group in self._enemy_groups:
+            if enemy_group.group_id == group_id:
+                return enemy_group
+        return None
+
+    def _combat_for_unit(self, unit_id: str) -> CombatState | None:
+        for combat in self._combats.values():
+            if combat.unit_id == unit_id:
+                return combat
+        return None
+
+    def _combat_for_enemy_group(self, group_id: str) -> CombatState | None:
+        for combat in self._combats.values():
+            if combat.enemy_group_id == group_id:
+                return combat
+        return None
+
+    def _combat_seconds_remaining_for_unit(self, unit_id: str) -> float | None:
+        combat = self._combat_for_unit(unit_id)
+        if combat is None:
+            return None
+        return combat.seconds_remaining
+
     def _unit_bounds(self, unit: UnitState) -> tuple[int, int, int, int]:
         size = UNIT_TYPE_SPECS[unit.unit_type_id].marker_size_px
         left = int(unit.position[0] - size / 2)
@@ -1187,6 +1434,20 @@ class GameSession:
         right = left + size
         bottom = top + size
         return (left, top, right, bottom)
+
+    def _bounds_overlap(
+        self,
+        first_bounds: tuple[int, int, int, int],
+        second_bounds: tuple[int, int, int, int],
+    ) -> bool:
+        first_left, first_top, first_right, first_bottom = first_bounds
+        second_left, second_top, second_right, second_bottom = second_bounds
+        return not (
+            first_right < second_left
+            or second_right < first_left
+            or first_bottom < second_top
+            or second_bottom < first_top
+        )
 
     def _enemy_group_bounds(self, enemy_group: ZombieGroupState) -> tuple[int, int, int, int]:
         size = _ZOMBIE_GROUP_MARKER_SIZE_PX
