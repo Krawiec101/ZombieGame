@@ -17,3 +17,6 @@ mutants/
 .mypy_cache/
 .coverage
 htmlcov/
+
+# Local temporary artifacts
+.tmp-*/
