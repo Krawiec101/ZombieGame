@@ -14,6 +14,7 @@ from contracts.game_state import (
     MapObjectSnapshot,
     MissionObjectiveDefinitionSnapshot,
     MissionObjectiveProgressSnapshot,
+    RoadSnapshot,
     SupplyRouteSnapshot,
     SupplyTransportSnapshot,
     UnitCommanderSnapshot,
@@ -37,6 +38,8 @@ _SUPPLY_CONVOY_UNIT_TYPE_ID = "mechanized_squad"
 _TRANSPORT_SPAWN_OFFSET_X = 96.0
 _TRANSPORT_SPAWN_OFFSET_Y = 120.0
 _ZOMBIE_GROUP_MARKER_SIZE_PX = 22
+_MAIN_ROAD_ID = "main_supply_road"
+_ROAD_SAMPLES_PER_SEGMENT = 14
 
 _MAP_OBJECT_LAYOUT = (
     {
@@ -96,6 +99,7 @@ class UnitState:
     unit_type_id: str
     position: tuple[float, float]
     target: tuple[float, float] | None = None
+    path: tuple[tuple[float, float], ...] = ()
     carried_resources: dict[str, int] = field(default_factory=dict)
     name: str = ""
     commander: CommanderState = field(default_factory=CommanderState)
@@ -221,6 +225,7 @@ class GameSession:
 
         self._map_size: tuple[int, int] = (0, 0)
         self._map_objects: list[dict[str, Any]] = []
+        self._roads: list[dict[str, Any]] = []
         self._bases: dict[str, BaseState] = {}
         self._landing_pads: dict[str, LandingPadState] = {}
         self._supply_routes: dict[str, SupplyRouteState] = {}
@@ -233,6 +238,7 @@ class GameSession:
     def reset(self) -> None:
         self._units = []
         self._enemy_groups = []
+        self._roads = []
         self._bases = {}
         self._landing_pads = {}
         self._supply_routes = {}
@@ -252,6 +258,9 @@ class GameSession:
         self._map_size = new_size
         if map_size_changed or not self._map_objects:
             self._map_objects = self._build_map_objects(*self._map_size)
+            self._roads = self._build_roads()
+        elif not self._roads:
+            self._roads = self._build_roads()
 
         self._sync_bases_to_map_objects()
         self._sync_landing_pads_to_map_objects()
@@ -262,7 +271,12 @@ class GameSession:
             for unit in self._units:
                 unit.position = self._clamp_point_to_map(unit.position, unit_type_id=unit.unit_type_id)
                 if unit.target is not None:
-                    unit.target = self._clamp_point_to_map(unit.target, unit_type_id=unit.unit_type_id)
+                    road_mode = (
+                        "only"
+                        if self._unit_has_supply_route(unit.unit_id)
+                        else self._road_mode_for_unit(unit.unit_type_id)
+                    )
+                    self._set_unit_target(unit, unit.target, road_mode=road_mode)
             self._clamp_enemy_groups_to_map()
             self._refresh_supply_route_targets()
 
@@ -298,7 +312,11 @@ class GameSession:
         if self._unit_has_supply_route(selected_unit.unit_id):
             return
 
-        selected_unit.target = self._clamp_point_to_map(position, unit_type_id=selected_unit.unit_type_id)
+        self._set_unit_target(
+            selected_unit,
+            position,
+            road_mode=self._road_mode_for_unit(selected_unit.unit_type_id),
+        )
 
     def handle_right_click(self, _position: tuple[int, int]) -> None:
         if self._get_selected_unit() is None:
@@ -321,6 +339,7 @@ class GameSession:
 
         self._clear_supply_route_for_unit(selected_unit.unit_id)
         selected_unit.target = None  # pragma: no mutate
+        selected_unit.path = ()  # pragma: no mutate
         selected_unit.carried_resources = self._empty_resource_store()
         route = SupplyRouteState(
             route_id=f"{selected_unit.unit_id}:{source_object_id}->{destination_object_id}",
@@ -334,6 +353,15 @@ class GameSession:
 
     def map_objects_snapshot(self) -> list[dict[str, Any]]:
         return [{"id": obj["id"], "bounds": obj["bounds"]} for obj in self._map_objects]
+
+    def roads_snapshot(self) -> tuple[RoadSnapshot, ...]:
+        return tuple(
+            RoadSnapshot(
+                road_id=str(road["id"]),
+                points=tuple(tuple(point) for point in road["points"]),
+            )
+            for road in self._roads
+        )
 
     def units_snapshot(self) -> list[dict[str, Any]]:  # pragma: no mutate
         return [
@@ -495,6 +523,7 @@ class GameSession:
                 MapObjectSnapshot(object_id=obj["id"], bounds=obj["bounds"])
                 for obj in self.map_objects_snapshot()
             ),
+            roads=self.roads_snapshot(),  # pragma: no mutate
             units=tuple(  # pragma: no mutate
                 UnitSnapshot(
                     unit_id=unit["unit_id"],  # pragma: no mutate
@@ -552,6 +581,91 @@ class GameSession:
             objects.append(map_object)
         return objects
 
+    def _build_roads(self) -> list[dict[str, Any]]:
+        hq_center = self._map_object_center("hq")  # pragma: no mutate
+        landing_pad_center = self._map_object_center("landing_pad")  # pragma: no mutate
+        if hq_center == (0.0, 0.0) or landing_pad_center == (0.0, 0.0):  # pragma: no mutate
+            return []  # pragma: no mutate
+
+        width, height = self._map_size  # pragma: no mutate
+        control_points = (  # pragma: no mutate
+            hq_center,  # pragma: no mutate
+            (width * 0.30, height * 0.66),  # pragma: no mutate
+            (width * 0.42, height * 0.74),  # pragma: no mutate
+            (width * 0.58, height * 0.63),  # pragma: no mutate
+            (width * 0.69, height * 0.50),  # pragma: no mutate
+            landing_pad_center,  # pragma: no mutate
+        )
+        return [{"id": _MAIN_ROAD_ID, "points": self._sample_road_curve(control_points)}]  # pragma: no mutate
+
+    def _sample_road_curve(
+        self,
+        control_points: tuple[tuple[float, float], ...],
+    ) -> tuple[tuple[float, float], ...]:
+        if len(control_points) < 2:  # pragma: no mutate
+            return control_points  # pragma: no mutate
+
+        sampled_points: list[tuple[float, float]] = []  # pragma: no mutate
+        for index in range(len(control_points) - 1):  # pragma: no mutate
+            p0 = control_points[index - 1] if index > 0 else control_points[index]  # pragma: no mutate
+            p1 = control_points[index]  # pragma: no mutate
+            p2 = control_points[index + 1]  # pragma: no mutate
+            p3 = (  # pragma: no mutate
+                control_points[index + 2]  # pragma: no mutate
+                if index + 2 < len(control_points)  # pragma: no mutate
+                else control_points[index + 1]  # pragma: no mutate
+            )
+            for sample_index in range(_ROAD_SAMPLES_PER_SEGMENT):  # pragma: no mutate
+                t = sample_index / float(_ROAD_SAMPLES_PER_SEGMENT)  # pragma: no mutate
+                sampled_points.append(self._catmull_rom_point(p0, p1, p2, p3, t))  # pragma: no mutate
+
+        sampled_points.append(control_points[-1])  # pragma: no mutate
+        return tuple(self._deduplicate_points(sampled_points))  # pragma: no mutate
+
+    def _catmull_rom_point(
+        self,
+        p0: tuple[float, float],
+        p1: tuple[float, float],
+        p2: tuple[float, float],
+        p3: tuple[float, float],
+        t: float,
+    ) -> tuple[float, float]:
+        t2 = t * t  # pragma: no mutate
+        t3 = t2 * t  # pragma: no mutate
+        x = 0.5 * (  # pragma: no mutate
+            (2.0 * p1[0])  # pragma: no mutate
+            + (-p0[0] + p2[0]) * t  # pragma: no mutate
+            + (2.0 * p0[0] - 5.0 * p1[0] + 4.0 * p2[0] - p3[0]) * t2  # pragma: no mutate
+            + (-p0[0] + 3.0 * p1[0] - 3.0 * p2[0] + p3[0]) * t3  # pragma: no mutate
+        )
+        y = 0.5 * (  # pragma: no mutate
+            (2.0 * p1[1])  # pragma: no mutate
+            + (-p0[1] + p2[1]) * t  # pragma: no mutate
+            + (2.0 * p0[1] - 5.0 * p1[1] + 4.0 * p2[1] - p3[1]) * t2  # pragma: no mutate
+            + (-p0[1] + 3.0 * p1[1] - 3.0 * p2[1] + p3[1]) * t3  # pragma: no mutate
+        )
+        return self._clamp_road_point((x, y))  # pragma: no mutate
+
+    def _clamp_road_point(self, point: tuple[float, float]) -> tuple[float, float]:
+        width, height = self._map_size  # pragma: no mutate
+        if width <= 0 or height <= 0:  # pragma: no mutate
+            return point  # pragma: no mutate
+        return (  # pragma: no mutate
+            min(max(float(point[0]), 0.0), float(width)),  # pragma: no mutate
+            min(max(float(point[1]), 0.0), float(height)),  # pragma: no mutate
+        )
+
+    def _deduplicate_points(
+        self,
+        points: list[tuple[float, float]],
+    ) -> list[tuple[float, float]]:
+        deduplicated: list[tuple[float, float]] = []  # pragma: no mutate
+        for point in points:  # pragma: no mutate
+            if deduplicated and self._positions_match(deduplicated[-1], point, tolerance=0.1):  # pragma: no mutate
+                continue  # pragma: no mutate
+            deduplicated.append(point)  # pragma: no mutate
+        return deduplicated  # pragma: no mutate
+
     def _sync_bases_to_map_objects(self) -> None:
         synced_bases: dict[str, BaseState] = {}
         for map_object in self._map_objects:
@@ -580,7 +694,7 @@ class GameSession:
                 continue
 
             object_id = str(map_object["id"])
-            pad_size = str(map_object.get("pad_size", "small"))
+            pad_size = str(map_object["pad_size"])
             pad_spec = LANDING_PAD_TYPE_SPECS.get(pad_size, LANDING_PAD_TYPE_SPECS["small"])
             previous = self._landing_pads.get(object_id)
             resources = self._empty_resource_store()
@@ -635,7 +749,7 @@ class GameSession:
             UnitState(
                 unit_id="bravo_mechanized",
                 unit_type_id="mechanized_squad",
-                position=(hq_center[0] + 26.0, hq_center[1] + 8.0),
+                position=self._road_anchor_for_point((hq_center[0] + 26.0, hq_center[1] + 8.0)),
                 name="2. Sekcja Bravo",
                 commander=CommanderState(name="kpt. Marek Wolny", experience_level="veteran"),
                 experience_level="regular",
@@ -676,20 +790,111 @@ class GameSession:
                 continue
 
             current_x, current_y = unit.position
-            target_x, target_y = unit.target
+            next_waypoint = unit.path[0] if unit.path else unit.target
+            target_x, target_y = next_waypoint
             delta_x = target_x - current_x
             delta_y = target_y - current_y
             distance = math.hypot(delta_x, delta_y)
 
             if distance <= speed_px_per_tick:
-                unit.position = unit.target
-                unit.target = None
+                unit.position = next_waypoint
+                if unit.path:
+                    unit.path = unit.path[1:]
+                if not unit.path:
+                    unit.target = None
                 continue
 
             step = speed_px_per_tick / distance
             moved_x = current_x + delta_x * step
             moved_y = current_y + delta_y * step
             unit.position = self._clamp_point_to_map((moved_x, moved_y), unit_type_id=unit.unit_type_id)
+
+    def _set_unit_target(
+        self,
+        unit: UnitState,
+        destination: tuple[float, float] | tuple[int, int],
+        *,
+        road_mode: str,
+    ) -> None:
+        final_target = self._clamp_point_to_map(destination, unit_type_id=unit.unit_type_id)
+        if self._positions_match(unit.position, final_target):
+            unit.position = final_target
+            unit.target = None
+            unit.path = ()
+            return
+
+        path = self._plan_unit_path(
+            unit.position,
+            final_target,
+            road_mode=road_mode,
+        )
+        unit.target = final_target
+        unit.path = tuple(path) if path else (final_target,)
+
+    def _plan_unit_path(
+        self,
+        start: tuple[float, float],
+        destination: tuple[float, float],
+        *,
+        road_mode: str,
+    ) -> list[tuple[float, float]]:
+        if road_mode == "off" or not self._roads:  # pragma: no mutate
+            return [destination]  # pragma: no mutate
+
+        road_points = self._primary_road_points()  # pragma: no mutate
+        if not road_points:  # pragma: no mutate
+            return [destination]  # pragma: no mutate
+
+        start_anchor = self._road_anchor_for_point(start)  # pragma: no mutate
+        destination_anchor = self._road_anchor_for_point(destination)  # pragma: no mutate
+        path: list[tuple[float, float]] = []  # pragma: no mutate
+
+        if road_mode == "prefer" and not self._positions_match(start, start_anchor, tolerance=2.0):  # pragma: no mutate
+            path.append(start_anchor)  # pragma: no mutate
+
+        path.extend(self._road_points_between(start_anchor, destination_anchor))  # pragma: no mutate
+
+        if not path or not self._positions_match(path[-1], destination_anchor, tolerance=2.0):  # pragma: no mutate
+            path.append(destination_anchor)  # pragma: no mutate
+
+        if not self._positions_match(path[-1], destination, tolerance=2.0):  # pragma: no mutate
+            path.append(destination)  # pragma: no mutate
+
+        return self._deduplicate_points(path)  # pragma: no mutate
+
+    def _road_mode_for_unit(self, unit_type_id: str) -> str:
+        if unit_type_id == _SUPPLY_CONVOY_UNIT_TYPE_ID:  # pragma: no mutate
+            return "prefer"  # pragma: no mutate
+        return "off"  # pragma: no mutate
+
+    def _primary_road_points(self) -> tuple[tuple[float, float], ...]:
+        if not self._roads:  # pragma: no mutate
+            return ()  # pragma: no mutate
+        return tuple(self._roads[0].get("points", ()))  # pragma: no mutate
+
+    def _road_anchor_for_point(self, point: tuple[float, float]) -> tuple[float, float]:
+        road_points = self._primary_road_points()  # pragma: no mutate
+        if not road_points:  # pragma: no mutate
+            return point  # pragma: no mutate
+        return min(  # pragma: no mutate
+            road_points,  # pragma: no mutate
+            key=lambda road_point: math.hypot(road_point[0] - point[0], road_point[1] - point[1]),  # pragma: no mutate
+        )
+
+    def _road_points_between(
+        self,
+        start_anchor: tuple[float, float],
+        destination_anchor: tuple[float, float],
+    ) -> list[tuple[float, float]]:
+        road_points = self._primary_road_points()  # pragma: no mutate
+        if not road_points:  # pragma: no mutate
+            return []  # pragma: no mutate
+
+        start_index = road_points.index(start_anchor)  # pragma: no mutate
+        destination_index = road_points.index(destination_anchor)  # pragma: no mutate
+        if start_index <= destination_index:  # pragma: no mutate
+            return list(road_points[start_index : destination_index + 1])  # pragma: no mutate
+        return list(reversed(road_points[destination_index : start_index + 1]))  # pragma: no mutate
 
     def _consume_supply_elapsed_seconds(self) -> float:
         now = float(self._time_provider())
@@ -878,7 +1083,8 @@ class GameSession:
     def _refresh_route_pickup(self, route: SupplyRouteState, unit: UnitState) -> None:
         pickup_target = self._object_target_point(route.source_object_id, unit.unit_type_id)
         if not self._positions_match(unit.position, pickup_target):
-            unit.target = pickup_target
+            if unit.target is None or not self._positions_match(unit.target, pickup_target):
+                self._set_unit_target(unit, pickup_target, road_mode="only")
             route.phase = "to_pickup"
             return
 
@@ -891,17 +1097,23 @@ class GameSession:
 
         if transfer_total <= 0:
             unit.target = None
+            unit.path = ()
             route.phase = "awaiting_supply" if available_at_source <= 0 else "awaiting_capacity"
             return
 
         unit.carried_resources = self._take_resources(source.resources, transfer_total)
-        unit.target = self._object_target_point(route.destination_object_id, unit.unit_type_id)
+        self._set_unit_target(
+            unit,
+            self._object_target_point(route.destination_object_id, unit.unit_type_id),
+            road_mode="only",
+        )
         route.phase = "to_dropoff"
 
     def _refresh_route_delivery(self, route: SupplyRouteState, unit: UnitState) -> None:
         dropoff_target = self._object_target_point(route.destination_object_id, unit.unit_type_id)
         if not self._positions_match(unit.position, dropoff_target):
-            unit.target = dropoff_target
+            if unit.target is None or not self._positions_match(unit.target, dropoff_target):
+                self._set_unit_target(unit, dropoff_target, road_mode="only")
             route.phase = "to_dropoff"
             return
 
@@ -916,11 +1128,16 @@ class GameSession:
         if delivered_total < carried_total:
             unit.carried_resources = self._subtract_resources(unit.carried_resources, delivered_resources)
             unit.target = None
+            unit.path = ()
             route.phase = "awaiting_capacity"
             return
 
         unit.carried_resources = self._empty_resource_store()
-        unit.target = self._object_target_point(route.source_object_id, unit.unit_type_id)
+        self._set_unit_target(
+            unit,
+            self._object_target_point(route.source_object_id, unit.unit_type_id),
+            road_mode="only",
+        )
         route.phase = "to_pickup"
 
     def _refresh_transport_geometry(self, landing_pad: LandingPadState) -> None:

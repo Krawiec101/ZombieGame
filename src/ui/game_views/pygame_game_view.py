@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from contracts.game_state import (
@@ -8,6 +9,7 @@ from contracts.game_state import (
     LandingPadSnapshot,
     MapObjectSnapshot,
     MissionObjectiveDefinitionSnapshot,
+    RoadSnapshot,
     SupplyRouteSnapshot,
     SupplyTransportSnapshot,
     UnitSnapshot,
@@ -80,6 +82,7 @@ class PygameGameView:
         self._font_hint = font_hint
         self._map_rect: Any | None = None
         self._map_objects: list[MapObjectSnapshot] = []
+        self._roads: list[RoadSnapshot] = []
         self._bases: dict[str, BaseSnapshot] = {}
         self._landing_pads: dict[str, LandingPadSnapshot] = {}
         self._supply_routes: list[SupplyRouteSnapshot] = []
@@ -92,6 +95,7 @@ class PygameGameView:
 
     def apply_game_state(self, *, snapshot: GameStateSnapshot) -> None:
         self._map_objects = list(snapshot.map_objects)
+        self._roads = list(snapshot.roads)
         self._bases = {base.object_id: base for base in snapshot.bases}
         self._landing_pads = {landing_pad.object_id: landing_pad for landing_pad in snapshot.landing_pads}
         self._supply_routes = list(snapshot.supply_routes)
@@ -107,6 +111,7 @@ class PygameGameView:
 
     def clear_game_state(self) -> None:
         self._map_objects = []
+        self._roads = []
         self._bases = {}
         self._landing_pads = {}
         self._supply_routes = []
@@ -128,6 +133,7 @@ class PygameGameView:
         _ = (character_name, show_running_hint)
         self._screen.fill((14, 18, 28))
         self._map_rect = self._draw_map_area()
+        self._draw_roads()
         self._draw_map_objects()
         self._draw_supply_routes()
         self._draw_supply_transports()
@@ -180,6 +186,19 @@ class PygameGameView:
         pygame.draw.rect(self._screen, (72, 98, 112), map_rect, 2, border_radius=10)
         return map_rect
 
+    def _draw_roads(self) -> None:
+        pygame = self._pygame
+        for road in self._roads:
+            road_points = [(int(point[0]), int(point[1])) for point in road.points]
+            if len(road_points) < 2:
+                continue
+            for start, end in zip(road_points, road_points[1:], strict=False):
+                pygame.draw.line(self._screen, (86, 74, 62), start, end, 14)
+                pygame.draw.line(self._screen, (116, 102, 86), start, end, 10)
+            for start, end in zip(road_points, road_points[1:], strict=False):
+                midpoint = ((start[0] + end[0]) // 2, (start[1] + end[1]) // 2)
+                pygame.draw.line(self._screen, (214, 198, 152), start, midpoint, 2)
+
     def _draw_map_objects(self) -> None:
         pygame = self._pygame
         for map_object in self._map_objects:
@@ -193,15 +212,21 @@ class PygameGameView:
     def _draw_supply_routes(self) -> None:
         pygame = self._pygame
         for route in self._supply_routes:
-            start = self._map_object_center(route.source_object_id)
-            end = self._map_object_center(route.destination_object_id)
-            pygame.draw.line(
-                self._screen,
-                (216, 182, 104),
-                (int(start[0]), int(start[1])),
-                (int(end[0]), int(end[1])),
-                4,
-            )
+            route_points = self._supply_route_points(route)
+            if len(route_points) < 2:
+                continue
+
+            for start, end in zip(route_points, route_points[1:], strict=False):
+                pygame.draw.line(
+                    self._screen,
+                    (216, 182, 104),
+                    (int(start[0]), int(start[1])),
+                    (int(end[0]), int(end[1])),
+                    4,
+                )
+
+            start = route_points[0]
+            end = route_points[-1]
             pygame.draw.circle(self._screen, (252, 231, 172), (int(start[0]), int(start[1])), 6)
             pygame.draw.circle(self._screen, (252, 231, 172), (int(end[0]), int(end[1])), 6)
 
@@ -214,8 +239,9 @@ class PygameGameView:
                 True,
                 (245, 236, 205),
             )
-            mid_x = int((start[0] + end[0]) / 2.0 - label.get_width() / 2)
-            mid_y = int((start[1] + end[1]) / 2.0 - 24)
+            label_anchor = self._polyline_midpoint(route_points)
+            mid_x = int(label_anchor[0] - label.get_width() / 2)
+            mid_y = int(label_anchor[1] - 24)
             self._screen.blit(label, (mid_x, mid_y))
 
     def _draw_supply_transports(self) -> None:
@@ -442,6 +468,63 @@ class PygameGameView:
             return (0.0, 0.0)
         left, top, right, bottom = map_object.bounds
         return ((left + right) / 2.0, (top + bottom) / 2.0)
+
+    def _supply_route_points(self, route: SupplyRouteSnapshot) -> tuple[tuple[float, float], ...]:
+        start = self._map_object_center(route.source_object_id)
+        end = self._map_object_center(route.destination_object_id)
+        if not self._roads:
+            return (start, end)
+
+        road_points = self._roads[0].points
+        if len(road_points) < 2:
+            return (start, end)
+
+        start_anchor = self._road_anchor_for_point(start, road_points)
+        end_anchor = self._road_anchor_for_point(end, road_points)
+        start_index = road_points.index(start_anchor)
+        end_index = road_points.index(end_anchor)
+        if start_index <= end_index:
+            return road_points[start_index : end_index + 1]
+        return tuple(reversed(road_points[end_index : start_index + 1]))
+
+    def _road_anchor_for_point(
+        self,
+        point: tuple[float, float],
+        road_points: tuple[tuple[float, float], ...],
+    ) -> tuple[float, float]:
+        return min(
+            road_points,
+            key=lambda road_point: math.hypot(road_point[0] - point[0], road_point[1] - point[1]),
+        )
+
+    def _polyline_midpoint(self, points: tuple[tuple[float, float], ...]) -> tuple[float, float]:
+        if not points:
+            return (0.0, 0.0)
+        if len(points) == 1:
+            return points[0]
+
+        segment_lengths = [
+            math.hypot(end[0] - start[0], end[1] - start[1])
+            for start, end in zip(points, points[1:], strict=False)
+        ]
+        total_length = sum(segment_lengths)
+        if total_length <= 0:
+            return points[len(points) // 2]
+
+        halfway = total_length / 2.0
+        traveled = 0.0
+        for index, segment_length in enumerate(segment_lengths):
+            if traveled + segment_length >= halfway:
+                start = points[index]
+                end = points[index + 1]
+                progress = 0.0 if segment_length <= 0 else (halfway - traveled) / segment_length
+                return (
+                    start[0] + (end[0] - start[0]) * progress,
+                    start[1] + (end[1] - start[1]) * progress,
+                )
+            traveled += segment_length
+
+        return points[-1]
 
     def _draw_supply_route_planning_overlay(self, planning_state: dict[str, Any]) -> None:
         pygame = self._pygame
