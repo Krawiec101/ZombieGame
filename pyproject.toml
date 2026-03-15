@@ -4,6 +4,7 @@ also_copy = ["src/contracts/", "src/ui/", "src/main.py"]
 pytest_add_cli_args_test_selection = ["tests/"]
 pytest_add_cli_args = ["-q"]
 max_stack_depth = -1
+mutate_only_covered_lines = true
 do_not_mutate = [
   "src/core/orders.py",
 ]

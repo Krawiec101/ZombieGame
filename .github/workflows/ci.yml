@@ -16,6 +16,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Restore mutmut cache
+        uses: actions/cache@v4
+        with:
+          path: mutants
+          key: ${{ runner.os }}-mutmut-${{ hashFiles('pyproject.toml', 'requirements.txt', 'docker/Dockerfile') }}
+          restore-keys: |
+            ${{ runner.os }}-mutmut-
+
       - name: Build Docker image(s)
         run: docker compose build
 
