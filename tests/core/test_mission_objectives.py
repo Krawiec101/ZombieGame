@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from core.mission_objectives import (
     MissionObjectiveRule,
     MissionObjectivesEvaluator,
@@ -168,6 +170,37 @@ def test_evaluator_preserves_status_for_non_boolean_truthy_current_status() -> N
     )
 
     assert statuses["motorized_to_landing_pad"] is True
+
+
+def test_evaluator_requests_missing_status_with_false_default() -> None:
+    class RecordingStatusMapping(Mapping[str, bool]):
+        def __init__(self) -> None:
+            self.defaults: list[object] = []
+
+        def __getitem__(self, key: str) -> bool:
+            raise KeyError(key)
+
+        def __iter__(self):
+            return iter(())
+
+        def __len__(self) -> int:
+            return 0
+
+        def get(self, key: str, default=None):  # type: ignore[override]
+            self.defaults.append(default)
+            return default
+
+    evaluator = create_default_mission_objectives_evaluator()
+    current_status = RecordingStatusMapping()
+
+    statuses = evaluator.evaluate(
+        units=[],
+        map_objects=[],
+        current_status=current_status,
+    )
+
+    assert current_status.defaults == [False]
+    assert statuses == {"motorized_to_landing_pad": False}
 
 
 def test_evaluator_coerces_map_object_id_to_string_for_lookup() -> None:

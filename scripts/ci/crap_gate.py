@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import subprocess
 import sys
@@ -116,7 +117,10 @@ def load_complexity_blocks(source_dir: Path) -> list[dict[str, object]]:
         raise FileNotFoundError(f"Source directory not found: {source_dir}")
 
     command = [sys.executable, "-m", "radon", "cc", "-j", str(source_dir)]
-    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    result = subprocess.run(command, check=False, capture_output=True, text=True)
+    if getattr(result, "returncode", 0) != 0:
+        return load_complexity_blocks_with_ast(source_dir)
+
     complexity_data = json.loads(result.stdout or "{}")
     blocks: list[dict[str, object]] = []
     seen_keys: set[tuple[str, str, int, int]] = set()
@@ -134,6 +138,85 @@ def load_complexity_blocks(source_dir: Path) -> list[dict[str, object]]:
                 continue
             seen_keys.add(block_key)
             blocks.append(block)
+
+    return blocks
+
+
+class ComplexityVisitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.blocks: list[dict[str, object]] = []
+        self._class_stack: list[str] = []
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._class_stack.append(node.name)
+        self.generic_visit(node)
+        self._class_stack.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.blocks.append(self._build_block(node))
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.blocks.append(self._build_block(node))
+        self.generic_visit(node)
+
+    def _build_block(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, object]:
+        qualified_name = node.name
+        if self._class_stack:
+            qualified_name = f"{self._class_stack[-1]}.{node.name}"
+
+        return {
+            "name": qualified_name,
+            "lineno": int(node.lineno),
+            "endline": int(getattr(node, "end_lineno", node.lineno)),
+            "complexity": calculate_ast_complexity(node),
+        }
+
+
+def calculate_ast_complexity(node: ast.FunctionDef | ast.AsyncFunctionDef) -> int:
+    complexity = 1
+    branch_nodes = (
+        ast.If,
+        ast.For,
+        ast.AsyncFor,
+        ast.While,
+        ast.IfExp,
+        ast.Try,
+        ast.ExceptHandler,
+        ast.BoolOp,
+        ast.Match,
+    )
+
+    for child in ast.walk(node):
+        if isinstance(child, branch_nodes):
+            if isinstance(child, ast.BoolOp):
+                complexity += max(1, len(child.values) - 1)
+            elif isinstance(child, ast.Try):
+                complexity += 1
+            else:
+                complexity += 1
+
+    return complexity
+
+
+def load_complexity_blocks_with_ast(source_dir: Path) -> list[dict[str, object]]:
+    blocks: list[dict[str, object]] = []
+
+    for path in sorted(source_dir.rglob("*.py")):
+        normalized_file_path = normalize_path(path)
+        module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        visitor = ComplexityVisitor()
+        visitor.visit(module)
+        for block in visitor.blocks:
+            blocks.append(
+                {
+                    "file_path": normalized_file_path,
+                    "name": str(block["name"]),
+                    "lineno": int(block["lineno"]),
+                    "endline": int(block["endline"]),
+                    "complexity": int(block["complexity"]),
+                }
+            )
 
     return blocks
 

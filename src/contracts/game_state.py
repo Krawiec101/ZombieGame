@@ -13,6 +13,12 @@ class MapObjectSnapshot:
 
 
 @dataclass(frozen=True)
+class RoadSnapshot:
+    road_id: str
+    points: tuple[Position, ...]
+
+
+@dataclass(frozen=True)
 class UnitSnapshot:
     unit_id: str
     unit_type_id: str
@@ -92,6 +98,7 @@ class GameStateSnapshot:
     selected_unit_id: str | None
     objective_definitions: tuple[MissionObjectiveDefinitionSnapshot, ...]
     objective_progress: tuple[MissionObjectiveProgressSnapshot, ...]
+    roads: tuple[RoadSnapshot, ...] = ()
     landing_pads: tuple[LandingPadSnapshot, ...] = ()
     bases: tuple[BaseSnapshot, ...] = ()
     supply_transports: tuple[SupplyTransportSnapshot, ...] = ()

@@ -12,6 +12,7 @@ from contracts.game_state import (
     MapObjectSnapshot,
     MissionObjectiveDefinitionSnapshot,
     MissionObjectiveProgressSnapshot,
+    RoadSnapshot,
     SupplyRouteSnapshot,
     SupplyTransportSnapshot,
     UnitSnapshot,
@@ -76,6 +77,7 @@ class _FakeScreen:
 class _FakeDraw:
     def __init__(self) -> None:
         self.rect_calls: list[tuple[tuple[int, int, int], _FakeRect]] = []
+        self.line_records: list[tuple[tuple[int, int, int], tuple[int, int], tuple[int, int], int]] = []
         self.line_calls = 0
         self.circle_calls = 0
 
@@ -93,11 +95,12 @@ class _FakeDraw:
     def line(
         self,
         _screen: object,
-        _color: tuple[int, int, int],
-        _start_pos: tuple[int, int],
-        _end_pos: tuple[int, int],
-        _width: int = 1,
+        color: tuple[int, int, int],
+        start_pos: tuple[int, int],
+        end_pos: tuple[int, int],
+        width: int = 1,
     ) -> None:
+        self.line_records.append((color, start_pos, end_pos, width))
         self.line_calls += 1
 
     def circle(
@@ -151,6 +154,12 @@ def _sample_game_state(*, objective_completed: bool = False) -> GameStateSnapsho
         map_objects=(
             MapObjectSnapshot(object_id="hq", bounds=(160, 200, 244, 256)),
             MapObjectSnapshot(object_id="landing_pad", bounds=(700, 170, 772, 218)),
+        ),
+        roads=(
+            RoadSnapshot(
+                road_id="main_supply_road",
+                points=((202.0, 228.0), (312.0, 340.0), (486.0, 316.0), (620.0, 250.0), (736.0, 194.0)),
+            ),
         ),
         units=(
             UnitSnapshot(
@@ -279,6 +288,7 @@ def test_apply_game_state_updates_cached_state(game_view) -> None:
     game_view.view.apply_game_state(snapshot=state)
 
     assert {obj.object_id for obj in game_view.view._map_objects} == {"hq", "landing_pad"}
+    assert [road.road_id for road in game_view.view._roads] == ["main_supply_road"]
     assert set(game_view.view._bases) == {"hq"}
     assert set(game_view.view._landing_pads) == {"landing_pad"}
     assert [route.route_id for route in game_view.view._supply_routes] == ["bravo_mechanized:landing_pad->hq"]
@@ -358,6 +368,37 @@ def test_render_draws_supply_route_marker(game_view) -> None:
     assert game_view.pygame.draw.circle_calls >= 2
 
 
+def test_render_draws_supply_route_along_road_polyline(game_view) -> None:
+    game_view.view.apply_game_state(snapshot=_sample_game_state())
+
+    game_view.view.render(character_name="", show_running_hint=False)
+
+    route_segments = [
+        record
+        for record in game_view.pygame.draw.line_records
+        if record[0] == (216, 182, 104) and record[3] == 4
+    ]
+
+    assert len(route_segments) == 4
+    assert any(start[1] != end[1] for _color, start, end, _width in route_segments)
+    assert route_segments[0][1] == (736, 194)
+    assert route_segments[-1][2] == (202, 228)
+
+
+def test_render_draws_curved_road_segments(game_view) -> None:
+    game_view.view.apply_game_state(snapshot=_sample_game_state())
+
+    game_view.view.render(character_name="", show_running_hint=False)
+
+    road_segments = [
+        record
+        for record in game_view.pygame.draw.line_records
+        if record[0] == (86, 74, 62) and record[3] == 14
+    ]
+    assert road_segments
+    assert any(start[1] != end[1] for _color, start, end, _width in road_segments)
+
+
 def test_render_shows_outbound_transport_status_in_tooltip(game_view) -> None:
     state = _sample_game_state()
     outbound_landing_pad = state.landing_pads[0].__class__(
@@ -412,10 +453,12 @@ def test_render_hides_tooltip_when_mouse_is_outside_objects(game_view) -> None:
 def test_clear_game_state_clears_cached_state(game_view) -> None:
     game_view.view.apply_game_state(snapshot=_sample_game_state())
     assert game_view.view._map_objects
+    assert game_view.view._roads
 
     game_view.view.clear_game_state()
 
     assert game_view.view._map_objects == []
+    assert game_view.view._roads == []
     assert game_view.view._bases == {}
     assert game_view.view._landing_pads == {}
     assert game_view.view._supply_routes == []
