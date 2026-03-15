@@ -6,6 +6,8 @@ import pytest
 
 from contracts.game_state import (
     BaseSnapshot,
+    CombatNotificationSnapshot,
+    CombatSnapshot,
     GameStateSnapshot,
     LandingPadResourceSnapshot,
     LandingPadSnapshot,
@@ -151,7 +153,12 @@ class _FakePygame:
         return surface
 
 
-def _sample_game_state(*, objective_completed: bool = False) -> GameStateSnapshot:
+def _sample_game_state(
+    *,
+    objective_completed: bool = False,
+    combat_active: bool = False,
+    notification_phase: str | None = None,
+) -> GameStateSnapshot:
     return GameStateSnapshot(
         map_objects=(
             MapObjectSnapshot(object_id="hq", bounds=(160, 200, 244, 256)),
@@ -185,6 +192,8 @@ def _sample_game_state(*, objective_completed: bool = False) -> GameStateSnapsho
                 supply_capacity=0,
                 carried_supply_total=0,
                 active_supply_route_id=None,
+                is_in_combat=False,
+                combat_seconds_remaining=None,
             ),
             UnitSnapshot(
                 unit_id="bravo_mechanized",
@@ -207,6 +216,8 @@ def _sample_game_state(*, objective_completed: bool = False) -> GameStateSnapsho
                 supply_capacity=24,
                 carried_supply_total=0,
                 active_supply_route_id="bravo_mechanized:landing_pad->hq",
+                is_in_combat=combat_active,
+                combat_seconds_remaining=32 if combat_active else None,
             ),
         ),
         enemy_groups=(
@@ -216,6 +227,7 @@ def _sample_game_state(*, objective_completed: bool = False) -> GameStateSnapsho
                 marker_size_px=22,
                 name="Mala grupa zombie",
                 personnel=7,
+                is_in_combat=combat_active,
             ),
         ),
         selected_unit_id="alpha_infantry",
@@ -281,6 +293,29 @@ def _sample_game_state(*, objective_completed: bool = False) -> GameStateSnapsho
                 capacity=24,
             ),
         ),
+        combats=(
+            CombatSnapshot(
+                combat_id="bravo_mechanized:zulu_zombies",
+                unit_id="bravo_mechanized",
+                unit_name="2. Sekcja Bravo",
+                enemy_group_id="zulu_zombies",
+                enemy_group_name="Mala grupa zombie",
+                seconds_remaining=32,
+            ),
+        )
+        if combat_active
+        else (),
+        combat_notifications=(
+            CombatNotificationSnapshot(
+                notification_id=f"bravo_mechanized:zulu_zombies:{notification_phase}",
+                unit_name="2. Sekcja Bravo",
+                enemy_group_name="Mala grupa zombie",
+                phase=notification_phase,
+                seconds_remaining=12,
+            ),
+        )
+        if notification_phase is not None
+        else (),
     )
 
 
@@ -316,7 +351,7 @@ def test_render_uses_fullscreen_map_area(game_view) -> None:
 
 
 def test_apply_game_state_updates_cached_state(game_view) -> None:
-    state = _sample_game_state()
+    state = _sample_game_state(combat_active=True, notification_phase="started")
 
     game_view.view.apply_game_state(snapshot=state)
 
@@ -331,6 +366,8 @@ def test_apply_game_state_updates_cached_state(game_view) -> None:
         "mechanized_squad",
     }
     assert [enemy_group.group_id for enemy_group in game_view.view._enemy_groups] == ["zulu_zombies"]
+    assert [combat.combat_id for combat in game_view.view._combats] == ["bravo_mechanized:zulu_zombies"]
+    assert [notification.phase for notification in game_view.view._combat_notifications] == ["started"]
     assert game_view.view._selected_unit_id == "alpha_infantry"
 
 
@@ -433,6 +470,38 @@ def test_render_draws_enemy_group_marker(game_view) -> None:
     assert enemy_rects[0].height == 22
 
 
+def test_render_draws_combat_alert_panel_in_corner(game_view) -> None:
+    game_view.view.apply_game_state(snapshot=_sample_game_state(combat_active=True, notification_phase="started"))
+
+    game_view.view.render(character_name="", show_running_hint=False)
+
+    texts = _blitted_texts(game_view.screen)
+    assert "game.combat.alert.header" in texts
+    assert "2. Sekcja Bravo" in texts
+    assert "game.combat.alert.action.started" in texts
+
+
+def test_render_draws_combat_end_alert_panel_in_corner(game_view) -> None:
+    game_view.view.apply_game_state(snapshot=_sample_game_state(notification_phase="ended"))
+
+    game_view.view.render(character_name="", show_running_hint=False)
+
+    texts = _blitted_texts(game_view.screen)
+    assert "game.combat.alert.header" in texts
+    assert "2. Sekcja Bravo" in texts
+    assert "game.combat.alert.action.ended" in texts
+
+
+def test_render_marks_unit_that_is_currently_in_combat(game_view) -> None:
+    game_view.view.apply_game_state(snapshot=_sample_game_state(combat_active=True))
+
+    game_view.view.render(character_name="", show_running_hint=False)
+
+    combat_rects = [rect for color, rect in game_view.pygame.draw.rect_calls if color == (214, 124, 74)]
+    assert combat_rects
+    assert combat_rects[0].width > 20
+
+
 def test_render_draws_supply_route_marker(game_view) -> None:
     game_view.view.apply_game_state(snapshot=_sample_game_state())
 
@@ -525,7 +594,7 @@ def test_render_hides_tooltip_when_mouse_is_outside_objects(game_view) -> None:
 
 
 def test_clear_game_state_clears_cached_state(game_view) -> None:
-    game_view.view.apply_game_state(snapshot=_sample_game_state())
+    game_view.view.apply_game_state(snapshot=_sample_game_state(combat_active=True, notification_phase="started"))
     assert game_view.view._map_objects
     assert game_view.view._roads
 
@@ -539,6 +608,8 @@ def test_clear_game_state_clears_cached_state(game_view) -> None:
     assert game_view.view._supply_transports == []
     assert game_view.view._units == []
     assert game_view.view._enemy_groups == []
+    assert game_view.view._combats == []
+    assert game_view.view._combat_notifications == []
     assert game_view.view._selected_unit_id is None
 
 
