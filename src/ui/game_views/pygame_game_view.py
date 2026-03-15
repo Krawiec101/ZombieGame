@@ -73,6 +73,8 @@ _TRANSPORT_TYPE_TEXT_KEYS = {
     "light_supply_helicopter": "game.transport.type.light_supply_helicopter",
     "heavy_supply_helicopter": "game.transport.type.heavy_supply_helicopter",
 }
+_RECON_SITE_STYLE = ((132, 110, 84), (214, 192, 146))
+_RECON_SITE_TEXT_KEYS = ("game.map.object.recon_site.name", "game.map.object.recon_site.description")
 
 
 class PygameGameView:
@@ -219,9 +221,7 @@ class PygameGameView:
     def _draw_map_objects(self) -> None:
         pygame = self._pygame
         for map_object in self._map_objects:
-            fill_color, border_color = _MAP_OBJECT_STYLES.get(
-                map_object.object_id, ((95, 113, 129), (184, 200, 215))
-            )
+            fill_color, border_color = self._map_object_style(map_object.object_id)
             object_rect = self._rect_from_bounds(map_object.bounds)
             pygame.draw.rect(self._screen, fill_color, object_rect, border_radius=8)
             pygame.draw.rect(self._screen, border_color, object_rect, 2, border_radius=8)
@@ -491,7 +491,13 @@ class PygameGameView:
         return None
 
     def supply_route_source_candidates(self) -> tuple[str, ...]:
-        return tuple(sorted(self._landing_pads))
+        return tuple(
+            sorted(
+                landing_pad.object_id
+                for landing_pad in self._landing_pads.values()
+                if landing_pad.is_secured
+            )
+        )
 
     def supply_route_destination_candidates(self, *, source_object_id: str) -> tuple[str, ...]:
         if source_object_id not in self._landing_pads:
@@ -635,7 +641,7 @@ class PygameGameView:
         self._screen.blit(instruction_surface, (instruction_rect.left + 12, instruction_rect.top + 8))
 
     def _tooltip_content_for_map_object(self, map_object: MapObjectSnapshot) -> dict[str, Any] | None:
-        keys = _MAP_OBJECT_TEXT_KEYS.get(map_object.object_id)
+        keys = self._map_object_text_keys(map_object.object_id)
         if keys is None:
             return None
 
@@ -791,6 +797,16 @@ class PygameGameView:
         if transport_type_id is None:
             return text("game.transport.type.unknown")
         return text(_TRANSPORT_TYPE_TEXT_KEYS.get(transport_type_id, "game.transport.type.unknown"))
+
+    def _map_object_style(self, object_id: str) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+        if object_id.startswith("recon_site_"):
+            return _RECON_SITE_STYLE
+        return _MAP_OBJECT_STYLES.get(object_id, ((95, 113, 129), (184, 200, 215)))
+
+    def _map_object_text_keys(self, object_id: str) -> tuple[str, str] | None:
+        if object_id.startswith("recon_site_"):
+            return _RECON_SITE_TEXT_KEYS
+        return _MAP_OBJECT_TEXT_KEYS.get(object_id)
 
     def _draw_object_tooltip(
         self,

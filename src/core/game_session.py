@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -8,14 +9,15 @@ from typing import Any
 
 from contracts.game_state import (
     BaseSnapshot,
+    CombatSnapshot,
     CombatNotificationSnapshot,
     GameStateSnapshot,
-    CombatSnapshot,
     LandingPadResourceSnapshot,
     LandingPadSnapshot,
     MapObjectSnapshot,
     MissionObjectiveDefinitionSnapshot,
     MissionObjectiveProgressSnapshot,
+    MissionReportSnapshot,
     RoadSnapshot,
     SupplyRouteSnapshot,
     SupplyTransportSnapshot,
@@ -63,8 +65,14 @@ _MAP_OBJECT_LAYOUT = (
         "width": 72,
         "height": 48,
         "pad_size": "small",
-        "secured_by_objective_id": "motorized_to_landing_pad",
+        "secured_by_objective_id": "landing_pad_cleared",
     },
+)
+_RECON_SITE_LAYOUT = (
+    {"id": "recon_site_1", "anchor_x": 0.42, "anchor_y": 0.22, "width": 58, "height": 44},
+    {"id": "recon_site_2", "anchor_x": 0.56, "anchor_y": 0.20, "width": 58, "height": 44},
+    {"id": "recon_site_3", "anchor_x": 0.62, "anchor_y": 0.52, "width": 58, "height": 44},
+    {"id": "recon_site_4", "anchor_x": 0.34, "anchor_y": 0.76, "width": 58, "height": 44},
 )
 
 
@@ -188,6 +196,81 @@ class CombatNotificationState:
     seconds_remaining: float
 
 
+@dataclass(frozen=True)
+class ReinforcementTemplate:
+    unit_id: str
+    unit_type_id: str
+    name: str
+    commander: CommanderState
+    experience_level: str
+    personnel: int
+    morale: int
+    ammo: int
+    rations: int
+    fuel: int
+
+
+@dataclass(frozen=True)
+class MainObjectiveReportRule:
+    goal_id: str
+    required_objective_ids: tuple[str, ...]
+    report_id: str
+    title_key: str
+    message_key: str
+
+
+REINFORCEMENT_TEMPLATES: tuple[ReinforcementTemplate, ...] = (
+    ReinforcementTemplate(
+        unit_id="charlie_infantry",
+        unit_type_id="infantry_squad",
+        name="3. Druzyna Charlie",
+        commander=CommanderState(name="ppor. Lena Brzeg", experience_level="regular"),
+        experience_level="regular",
+        personnel=9,
+        morale=68,
+        ammo=74,
+        rations=12,
+        fuel=0,
+    ),
+    ReinforcementTemplate(
+        unit_id="delta_infantry",
+        unit_type_id="infantry_squad",
+        name="4. Druzyna Delta",
+        commander=CommanderState(name="sier. Oskar Lis", experience_level="veteran"),
+        experience_level="regular",
+        personnel=8,
+        morale=71,
+        ammo=70,
+        rations=10,
+        fuel=0,
+    ),
+)
+
+MAIN_OBJECTIVE_REPORT_RULES: tuple[MainObjectiveReportRule, ...] = (
+    MainObjectiveReportRule(
+        goal_id="secure_landing_pad_and_route",
+        required_objective_ids=("landing_pad_cleared", "supply_route_to_hq"),
+        report_id="hq_report_secure_landing_pad_and_route",
+        title_key="mission.report.title",
+        message_key="mission.report.secure_landing_pad_and_route",
+    ),
+    MainObjectiveReportRule(
+        goal_id="find_first_missing_detachment",
+        required_objective_ids=("find_first_missing_detachment",),
+        report_id="hq_report_find_first_missing_detachment",
+        title_key="mission.report.title",
+        message_key="mission.report.find_first_missing_detachment",
+    ),
+    MainObjectiveReportRule(
+        goal_id="find_second_missing_detachment",
+        required_objective_ids=("find_second_missing_detachment",),
+        report_id="hq_report_find_second_missing_detachment",
+        title_key="mission.report.title",
+        message_key="mission.report.find_second_missing_detachment",
+    ),
+)
+
+
 UNIT_TYPE_SPECS: dict[str, UnitTypeSpec] = {
     "infantry_squad": UnitTypeSpec(
         type_id="infantry_squad",
@@ -240,6 +323,7 @@ class GameSession:
         *,
         mission_objectives_evaluator: MissionObjectivesEvaluator,
         time_provider: Callable[[], float] | None = None,
+        search_roll_provider: Callable[[], float] | None = None,
     ) -> None:
         self._mission_objectives_evaluator = mission_objectives_evaluator
         self._objective_definitions = tuple(self._mission_objectives_evaluator.objectives())
@@ -247,6 +331,7 @@ class GameSession:
             definition["objective_id"]: False for definition in self._objective_definitions
         }
         self._time_provider = time_provider or time.monotonic
+        self._search_roll_provider = search_roll_provider or random.random
 
         self._map_size: tuple[int, int] = (0, 0)
         self._map_objects: list[dict[str, Any]] = []
@@ -258,10 +343,14 @@ class GameSession:
         self._enemy_groups: list[ZombieGroupState] = []
         self._combats: dict[str, CombatState] = {}
         self._combat_notifications: list[CombatNotificationState] = []
+        self._mission_reports: list[MissionReportSnapshot] = []
         self._selected_unit_id: str | None = None
         self._units_initialized = False
         self._last_supply_update_at: float | None = None
         self._last_combat_update_at: float | None = None
+        self._investigated_recon_site_ids: set[str] = set()
+        self._found_reinforcement_unit_ids: set[str] = set()
+        self._completed_main_objective_ids: set[str] = set()
 
     def reset(self) -> None:
         self._units = []
@@ -273,9 +362,13 @@ class GameSession:
         self._selected_unit_id = None
         self._combats = {}
         self._combat_notifications = []
+        self._mission_reports = []
         self._units_initialized = False
         self._last_supply_update_at = None
         self._last_combat_update_at = None
+        self._investigated_recon_site_ids = set()
+        self._found_reinforcement_unit_ids = set()
+        self._completed_main_objective_ids = set()
         self._objective_status = {
             definition["objective_id"]: False for definition in self._objective_definitions
         }
@@ -318,11 +411,16 @@ class GameSession:
         self._update_combats(elapsed_seconds=elapsed_combat_seconds)
         self._update_units_position()
         self._start_combats_for_colliding_units()
+        self._investigate_recon_sites()
         self._objective_status = self._mission_objectives_evaluator.evaluate(
             units=self.units_snapshot(),
             map_objects=self.map_objects_snapshot(),
             current_status=self._objective_status,
+            supply_routes=self.supply_routes_state_snapshot(),
+            enemy_groups=self.enemy_groups_state_snapshot(),
+            discovered_reinforcements_count=self._discovered_reinforcements_count(),
         )
+        self._update_main_objective_reports()
         self._update_supply_network(elapsed_seconds=elapsed_supply_seconds)
         self._update_supply_routes()
 
@@ -388,6 +486,17 @@ class GameSession:
 
     def map_objects_snapshot(self) -> list[dict[str, Any]]:
         return [{"id": obj["id"], "bounds": obj["bounds"]} for obj in self._map_objects]
+
+    def enemy_groups_state_snapshot(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "group_id": enemy_group.group_id,
+                "position": enemy_group.position,
+                "name": enemy_group.name,
+                "personnel": enemy_group.personnel,
+            }
+            for enemy_group in self._enemy_groups
+        ]
 
     def roads_snapshot(self) -> tuple[RoadSnapshot, ...]:
         return tuple(
@@ -571,6 +680,18 @@ class GameSession:
             )
         return tuple(snapshots)
 
+    def supply_routes_state_snapshot(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "route_id": route.route_id,
+                "unit_id": route.unit_id,
+                "source_object_id": route.source_object_id,
+                "destination_object_id": route.destination_object_id,
+                "phase": route.phase,
+            }
+            for route in self._supply_routes.values()
+        ]
+
     def objective_status_snapshot(self) -> dict[str, bool]:
         return dict(self._objective_status)
 
@@ -585,6 +706,9 @@ class GameSession:
             )
             for objective_id, completed in self._objective_status.items()
         )
+
+    def mission_reports_snapshot(self) -> tuple[MissionReportSnapshot, ...]:
+        return tuple(self._mission_reports)
 
     def selected_unit_id(self) -> str | None:
         return self._selected_unit_id
@@ -633,6 +757,7 @@ class GameSession:
                 for definition in self.objective_definitions_snapshot()
             ),
             objective_progress=self.objective_progress_snapshot(),  # pragma: no mutate
+            mission_reports=self.mission_reports_snapshot(),  # pragma: no mutate
             landing_pads=self.landing_pads_snapshot(),  # pragma: no mutate
             bases=self.bases_snapshot(),  # pragma: no mutate
             supply_transports=self.supply_transports_snapshot(),  # pragma: no mutate
@@ -642,20 +767,31 @@ class GameSession:
         )
 
     def _build_map_objects(self, width: int, height: int) -> list[dict[str, Any]]:
-        objects: list[dict[str, Any]] = []
-        for layout in _MAP_OBJECT_LAYOUT:
-            center_x = int(width * layout["anchor_x"])
-            center_y = int(height * layout["anchor_y"])
-            half_width = layout["width"] // 2
-            half_height = layout["height"] // 2
-            left = center_x - half_width
-            top = center_y - half_height
-            right = left + layout["width"]
-            bottom = top + layout["height"]
-            map_object = dict(layout)
-            map_object["bounds"] = (left, top, right, bottom)
-            objects.append(map_object)
+        objects = [self._map_object_from_layout(layout, width=width, height=height) for layout in _MAP_OBJECT_LAYOUT]
+        for layout in _RECON_SITE_LAYOUT:
+            if str(layout["id"]) in self._investigated_recon_site_ids:
+                continue
+            objects.append(self._map_object_from_layout(layout, width=width, height=height))
         return objects
+
+    def _map_object_from_layout(
+        self,
+        layout: dict[str, Any],
+        *,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:
+        center_x = int(width * layout["anchor_x"])
+        center_y = int(height * layout["anchor_y"])
+        half_width = layout["width"] // 2
+        half_height = layout["height"] // 2
+        left = center_x - half_width
+        top = center_y - half_height
+        right = left + layout["width"]
+        bottom = top + layout["height"]
+        map_object = dict(layout)
+        map_object["bounds"] = (left, top, right, bottom)
+        return map_object
 
     def _build_roads(self) -> list[dict[str, Any]]:
         hq_center = self._map_object_center("hq")  # pragma: no mutate
@@ -855,6 +991,118 @@ class GameSession:
     def _clamp_enemy_groups_to_map(self) -> None:
         for enemy_group in self._enemy_groups:
             enemy_group.position = self._clamp_enemy_point_to_map(enemy_group.position)
+
+    def _investigate_recon_sites(self) -> None:
+        newly_investigated = False
+        for layout in _RECON_SITE_LAYOUT:
+            site_id = str(layout["id"])
+            if site_id in self._investigated_recon_site_ids:
+                continue
+
+            site_bounds = self._map_object_bounds(site_id)
+            if site_bounds is None:
+                continue
+
+            if not any(self._point_in_bounds(unit.position, site_bounds) for unit in self._units):
+                continue
+
+            self._investigated_recon_site_ids.add(site_id)
+            newly_investigated = True
+            if self._should_reveal_reinforcement():
+                self._spawn_next_reinforcement(site_id)
+
+        if newly_investigated:
+            self._refresh_dynamic_map_objects()
+
+    def _should_reveal_reinforcement(self) -> bool:
+        remaining_reinforcements = len(REINFORCEMENT_TEMPLATES) - self._discovered_reinforcements_count()
+        remaining_sites = len(_RECON_SITE_LAYOUT) - len(self._investigated_recon_site_ids) + 1
+        if remaining_reinforcements <= 0 or remaining_sites <= 0:
+            return False
+        if remaining_reinforcements >= remaining_sites:
+            return True
+        reveal_probability = remaining_reinforcements / float(remaining_sites)
+        return float(self._search_roll_provider()) <= reveal_probability
+
+    def _spawn_next_reinforcement(self, site_id: str) -> None:
+        next_template = next(
+            (
+                template
+                for template in REINFORCEMENT_TEMPLATES
+                if template.unit_id not in self._found_reinforcement_unit_ids
+            ),
+            None,
+        )
+        if next_template is None:
+            return
+
+        spawn_position = self._clamp_point_to_map(
+            self._map_object_center(site_id),
+            unit_type_id=next_template.unit_type_id,
+        )
+        self._units.append(
+            UnitState(
+                unit_id=next_template.unit_id,
+                unit_type_id=next_template.unit_type_id,
+                position=spawn_position,
+                name=next_template.name,
+                commander=next_template.commander,
+                experience_level=next_template.experience_level,
+                personnel=next_template.personnel,
+                morale=next_template.morale,
+                ammo=next_template.ammo,
+                rations=next_template.rations,
+                fuel=next_template.fuel,
+            )
+        )
+        self._found_reinforcement_unit_ids.add(next_template.unit_id)
+
+    def _refresh_dynamic_map_objects(self) -> None:
+        width, height = self._map_size
+        if width <= 0 or height <= 0:
+            return
+        self._map_objects = self._build_map_objects(width, height)
+        self._sync_bases_to_map_objects()
+        self._sync_landing_pads_to_map_objects()
+
+    def _map_object_bounds(self, object_id: str) -> tuple[int, int, int, int] | None:
+        map_object = next((obj for obj in self._map_objects if obj["id"] == object_id), None)
+        if map_object is None:
+            return None
+        bounds = map_object.get("bounds")
+        if not isinstance(bounds, tuple) or len(bounds) != 4:
+            return None
+        return bounds
+
+    def _point_in_bounds(
+        self,
+        position: tuple[float, float] | tuple[int, int],
+        bounds: tuple[int, int, int, int],
+    ) -> bool:
+        x, y = position
+        left, top, right, bottom = bounds
+        return left <= x <= right and top <= y <= bottom
+
+    def _discovered_reinforcements_count(self) -> int:
+        return len(self._found_reinforcement_unit_ids)
+
+    def _update_main_objective_reports(self) -> None:
+        for report_rule in MAIN_OBJECTIVE_REPORT_RULES:
+            if report_rule.goal_id in self._completed_main_objective_ids:
+                continue
+            if not all(
+                self._objective_status.get(objective_id, False)
+                for objective_id in report_rule.required_objective_ids
+            ):
+                continue
+            self._completed_main_objective_ids.add(report_rule.goal_id)
+            self._mission_reports.append(
+                MissionReportSnapshot(
+                    report_id=report_rule.report_id,
+                    title_key=report_rule.title_key,
+                    message_key=report_rule.message_key,
+                )
+            )
 
     def _update_combats(self, *, elapsed_seconds: float) -> None:
         for combat_id in list(sorted(self._combats)):
@@ -1572,7 +1820,9 @@ class GameSession:
         source_object_id: str,
         destination_object_id: str,
     ) -> bool:
-        return source_object_id in self._landing_pads and destination_object_id in self._bases
+        if source_object_id not in self._landing_pads or destination_object_id not in self._bases:
+            return False
+        return self._is_landing_pad_secured(self._landing_pads[source_object_id])
 
     def _take_resources(self, storage: dict[str, int], amount: int) -> dict[str, int]:  # pragma: no mutate
         remaining = max(0, int(amount))
@@ -1673,8 +1923,10 @@ class GameSession:
 def create_default_game_session(
     *,
     time_provider: Callable[[], float] | None = None,
+    search_roll_provider: Callable[[], float] | None = None,
 ) -> GameSession:
     return GameSession(
         mission_objectives_evaluator=create_default_mission_objectives_evaluator(),
         time_provider=time_provider,
+        search_roll_provider=search_roll_provider,
     )

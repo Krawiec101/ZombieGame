@@ -24,6 +24,7 @@ from contracts.game_state import (
     MapObjectSnapshot,
     MissionObjectiveDefinitionSnapshot,
     MissionObjectiveProgressSnapshot,
+    MissionReportSnapshot,
     UnitSnapshot,
 )
 
@@ -389,6 +390,20 @@ def test_poll_ui_events_welcome_modal_enter_starts_game_mode(pygame_view) -> Non
     assert view._mode == "game"
 
 
+def test_poll_ui_events_game_report_modal_dismisses_to_game(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    view._mode = "game_report_modal"
+    view._active_mission_report = ("r1", "mission.report.title", "mission.report.secure_landing_pad_and_route")
+    fake_pygame.event.queue = [_event(fake_pygame.KEYDOWN, key=fake_pygame.K_RETURN, unicode="")]
+
+    events = view.poll_ui_events()
+
+    assert len(events) == 1
+    assert isinstance(events[0], GameFrameSyncRequested)
+    assert view._mode == "game"
+    assert view._active_mission_report is None
+
+
 def test_poll_ui_events_game_mode_escape_opens_context_menu(pygame_view) -> None:
     view, fake_pygame = pygame_view
     view._mode = "game"
@@ -724,6 +739,41 @@ def test_handle_domain_event_game_state_synced_updates_game_view_state(pygame_vi
     )
 
 
+def test_handle_domain_event_game_state_synced_opens_new_mission_report_modal_once(pygame_view) -> None:
+    view, _fake_pygame = pygame_view
+    view._mode = "game"
+    report = MissionReportSnapshot(
+        report_id="r1",
+        title_key="mission.report.title",
+        message_key="mission.report.secure_landing_pad_and_route",
+    )
+    event = GameStateSynced(
+        snapshot=GameStateSnapshot(
+            map_objects=(),
+            units=(),
+            selected_unit_id=None,
+            objective_definitions=(),
+            objective_progress=(),
+            mission_reports=(report,),
+        ),
+    )
+
+    view.handle_domain_event(event)
+
+    assert view._mode == "game_report_modal"
+    assert view._active_mission_report == (
+        "r1",
+        "mission.report.title",
+        "mission.report.secure_landing_pad_and_route",
+    )
+
+    view._dismiss_active_mission_report()
+    view.handle_domain_event(event)
+
+    assert view._mode == "game"
+    assert view._active_mission_report is None
+
+
 def test_close_is_idempotent(pygame_view) -> None:
     view, fake_pygame = pygame_view
 
@@ -901,6 +951,36 @@ def test_render_welcome_modal_draws_frame_and_sets_ok_hitbox(
     assert fake_pygame.draw.circle_calls >= 1
 
 
+def test_render_game_report_modal_draws_wrapped_message_and_sets_ok_hitbox(
+    pygame_view,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view, fake_pygame = pygame_view
+    monkeypatch.setattr(
+        pygame_view_module,
+        "text",
+        lambda key, **kwargs: (
+            "dlugi meldunek sztabu z gratulacjami i kolejnymi rozkazami"
+            if key == "mission.report.secure_landing_pad_and_route"
+            else key
+        ),
+    )
+    view._mode = "game_report_modal"
+    view._active_mission_report = (
+        "r1",
+        "mission.report.title",
+        "mission.report.secure_landing_pad_and_route",
+    )
+
+    view.render()
+
+    rendered_texts = _blitted_texts(fake_pygame)
+    assert isinstance(view._modal_ok_hitbox, _FakeRect)
+    assert "mission.report.title" in rendered_texts
+    assert any("dlugi meldunek sztabu" in text for text in rendered_texts)
+    assert any("rozkazami" in text for text in rendered_texts)
+
+
 def test_poll_ui_events_name_modal_backspace_and_non_printable_input(pygame_view) -> None:
     view, fake_pygame = pygame_view
     view._mode = "name_modal"
@@ -998,6 +1078,49 @@ def test_poll_ui_events_game_mode_non_escape_key_emits_frame_sync(pygame_view) -
 
     assert len(events) == 1
     assert isinstance(events[0], GameFrameSyncRequested)
+
+
+def test_draw_wrapped_text_returns_early_for_empty_text(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    calls: list[tuple[str, int, int]] = []
+
+    def capture_draw_text_at(
+        text: str,
+        _font: _FakeFont,
+        _color: tuple[int, int, int],
+        x: int,
+        y: int,
+    ) -> None:
+        calls.append((text, x, y))
+
+    view._draw_text_at = capture_draw_text_at
+    content_rect = fake_pygame.Rect(0, 0, 160, 80)
+
+    view._draw_wrapped_text("", view._font_hint, (1, 2, 3), content_rect)
+
+    assert calls == []
+
+
+def test_draw_wrapped_text_breaks_long_message_into_multiple_lines(pygame_view) -> None:
+    view, fake_pygame = pygame_view
+    calls: list[tuple[str, int, int]] = []
+
+    def capture_draw_text_at(
+        text: str,
+        _font: _FakeFont,
+        _color: tuple[int, int, int],
+        x: int,
+        y: int,
+    ) -> None:
+        calls.append((text, x, y))
+
+    view._draw_text_at = capture_draw_text_at
+    content_rect = fake_pygame.Rect(0, 0, 80, 80)
+
+    view._draw_wrapped_text("to jest dlugi meldunek sztabu", view._font_hint, (1, 2, 3), content_rect)
+
+    assert len(calls) >= 2
+    assert calls[0][2] < calls[1][2]
 
 
 def test_draw_wrapped_text_around_rect_returns_early_for_empty_text(pygame_view) -> None:

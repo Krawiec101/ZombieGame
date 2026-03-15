@@ -92,6 +92,13 @@ class MissionObjectiveProgressSnapshot:
 
 
 @dataclass(frozen=True)
+class MissionReportSnapshot:
+    report_id: str
+    title_key: str
+    message_key: str
+
+
+@dataclass(frozen=True)
 class LandingPadResourceSnapshot:
     resource_id: str
     amount: int
@@ -146,6 +153,7 @@ class GameStateSnapshot:
     selected_unit_id: str | None
     objective_definitions: tuple[MissionObjectiveDefinitionSnapshot, ...]
     objective_progress: tuple[MissionObjectiveProgressSnapshot, ...]
+    mission_reports: tuple[MissionReportSnapshot, ...] = ()
     enemy_groups: tuple[ZombieGroupSnapshot, ...] = ()
     roads: tuple[RoadSnapshot, ...] = ()
     landing_pads: tuple[LandingPadSnapshot, ...] = ()
