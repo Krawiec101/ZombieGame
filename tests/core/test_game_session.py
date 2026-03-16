@@ -10,6 +10,7 @@ from contracts.game_state import (
     LandingPadResourceSnapshot,
     LandingPadSnapshot,
     MissionObjectiveProgressSnapshot,
+    MissionReportSnapshot,
     RoadSnapshot,
     SupplyRouteSnapshot,
     SupplyTransportSnapshot,
@@ -21,6 +22,7 @@ from core.game_session import (
     BaseState,
     CombatState,
     CombatNotificationState,
+    SupplyTransportTypeSpec,
     UNIT_TYPE_SPECS,
     LandingPadState,
     SupplyRouteState,
@@ -70,7 +72,7 @@ def test_game_session_initializes_map_objects_and_units() -> None:
 
     map_object_ids = {obj["id"] for obj in session.map_objects_snapshot()}
     unit_type_ids = {unit["unit_type_id"] for unit in session.units_snapshot()}
-    assert map_object_ids == {"hq", "landing_pad"}
+    assert map_object_ids == {"hq", "landing_pad", "recon_site_1", "recon_site_2", "recon_site_3", "recon_site_4"}
     assert unit_type_ids == {"infantry_squad", "mechanized_squad"}
     assert session.enemy_groups_snapshot() == (
         ZombieGroupSnapshot(
@@ -91,7 +93,14 @@ def test_snapshot_exposes_typed_contract_for_ui_sync() -> None:
     snapshot = session.snapshot()
 
     assert isinstance(snapshot, GameStateSnapshot)
-    assert {map_object.object_id for map_object in snapshot.map_objects} == {"hq", "landing_pad"}
+    assert {map_object.object_id for map_object in snapshot.map_objects} == {
+        "hq",
+        "landing_pad",
+        "recon_site_1",
+        "recon_site_2",
+        "recon_site_3",
+        "recon_site_4",
+    }
     assert snapshot.roads == session.roads_snapshot()
     assert {unit.unit_type_id for unit in snapshot.units} == {
         "infantry_squad",
@@ -99,7 +108,19 @@ def test_snapshot_exposes_typed_contract_for_ui_sync() -> None:
     }
     assert snapshot.objective_progress == (
         MissionObjectiveProgressSnapshot(
-            objective_id="motorized_to_landing_pad",
+            objective_id="landing_pad_cleared",
+            completed=False,
+        ),
+        MissionObjectiveProgressSnapshot(
+            objective_id="supply_route_to_hq",
+            completed=False,
+        ),
+        MissionObjectiveProgressSnapshot(
+            objective_id="find_first_missing_detachment",
+            completed=False,
+        ),
+        MissionObjectiveProgressSnapshot(
+            objective_id="find_second_missing_detachment",
             completed=False,
         ),
     )
@@ -139,8 +160,20 @@ def test_snapshot_exposes_typed_contract_for_ui_sync() -> None:
     assert snapshot.selected_unit_id is None
     assert snapshot.objective_definitions == (
         session.snapshot().objective_definitions[0].__class__(
-            objective_id="motorized_to_landing_pad",
-            description_key="mission.objective.motorized_to_landing_pad",
+            objective_id="landing_pad_cleared",
+            description_key="mission.objective.landing_pad_cleared",
+        ),
+        session.snapshot().objective_definitions[0].__class__(
+            objective_id="supply_route_to_hq",
+            description_key="mission.objective.supply_route_to_hq",
+        ),
+        session.snapshot().objective_definitions[0].__class__(
+            objective_id="find_first_missing_detachment",
+            description_key="mission.objective.find_first_missing_detachment",
+        ),
+        session.snapshot().objective_definitions[0].__class__(
+            objective_id="find_second_missing_detachment",
+            description_key="mission.objective.find_second_missing_detachment",
         ),
     )
 
@@ -268,7 +301,7 @@ def test_landing_pad_supply_schedule_starts_after_objective_secured() -> None:
     assert initial_landing_pad.is_secured is False
     assert initial_landing_pad.next_transport_seconds is None
 
-    session._objective_status["motorized_to_landing_pad"] = True
+    session._objective_status["landing_pad_cleared"] = True
     session.tick()
 
     secured_landing_pad = _landing_pad_snapshot(session)
@@ -282,7 +315,7 @@ def test_supply_transport_appears_and_delivers_resources_after_real_time_elapsed
     session = create_default_game_session(time_provider=clock.now)
     session.update_map_dimensions(width=960, height=640)
     session.tick()
-    session._objective_status["motorized_to_landing_pad"] = True
+    session._objective_status["landing_pad_cleared"] = True
     session.tick()
 
     clock.advance(45)
@@ -347,7 +380,7 @@ def test_full_landing_pad_stops_future_supply_transport() -> None:
     session = create_default_game_session(time_provider=clock.now)
     session.update_map_dimensions(width=960, height=640)
     session.tick()
-    session._objective_status["motorized_to_landing_pad"] = True
+    session._objective_status["landing_pad_cleared"] = True
     session._landing_pads["landing_pad"].resources = {"fuel": 40, "mre": 20, "ammo": 30}
 
     session.tick()
@@ -466,12 +499,24 @@ def test_supply_route_requires_selection_and_valid_objects() -> None:
     assert session.supply_routes_snapshot() == ()
 
 
+def test_supply_route_requires_landing_pad_to_be_cleared_first() -> None:
+    session = create_default_game_session()
+    session.update_map_dimensions(width=960, height=640)
+    session.tick()
+    motorized = _unit_by_id(session.units_snapshot(), "bravo_mechanized")
+
+    session.handle_left_click(_unit_center(motorized))
+    session.handle_supply_route(source_object_id="landing_pad", destination_object_id="hq")
+
+    assert session.supply_routes_snapshot() == ()
+
+
 def test_supply_route_moves_motorized_unit_and_transfers_supply_to_hq() -> None:
     clock = _FakeClock()
     session = create_default_game_session(time_provider=clock.now)
     session.update_map_dimensions(width=960, height=640)
     session.tick()
-    session._objective_status["motorized_to_landing_pad"] = True
+    session._objective_status["landing_pad_cleared"] = True
     session.tick()
 
     clock.advance(45)
@@ -516,6 +561,7 @@ def test_supply_route_plans_path_along_road_points_only() -> None:
     session = create_default_game_session()
     session.update_map_dimensions(width=960, height=640)
     session.tick()
+    session._objective_status["landing_pad_cleared"] = True
     session._landing_pads["landing_pad"].resources = {"fuel": 12, "mre": 8, "ammo": 4}
     motorized = _unit_by_id(session.units_snapshot(), "bravo_mechanized")
 
@@ -535,6 +581,7 @@ def test_left_click_does_not_override_active_supply_route_target() -> None:
     session = create_default_game_session()
     session.update_map_dimensions(width=960, height=640)
     session.tick()
+    session._objective_status["landing_pad_cleared"] = True
     session._landing_pads["landing_pad"].resources = {"fuel": 12, "mre": 8, "ammo": 4}
     motorized = _unit_by_id(session.units_snapshot(), "bravo_mechanized")
 
@@ -583,57 +630,111 @@ def test_motorized_squad_moves_faster_than_foot_infantry() -> None:
     assert motorized_distance > infantry_distance * 2
 
 
-def test_objective_completed_only_by_motorized_squad_on_landing_pad() -> None:
+def test_landing_pad_objective_completes_only_after_zombies_are_removed() -> None:
     session = create_default_game_session()
     session.update_map_dimensions(width=960, height=640)
     session.tick()
-    landing_pad = next(obj for obj in session.map_objects_snapshot() if obj["id"] == "landing_pad")
-    left, top, right, bottom = landing_pad["bounds"]
-    center = ((left + right) // 2, (top + bottom) // 2)
-    motorized_target = (min(right - 10, center[0] + 18), center[1])
+    assert session.objective_status_snapshot()["landing_pad_cleared"] is False
 
-    infantry = _unit_by_id(session.units_snapshot(), "alpha_infantry")
-    session.handle_left_click(_unit_center(infantry))
-    session.handle_left_click(center)
-    for _ in range(3000):
-        session.tick()
-        if _unit_by_id(session.units_snapshot(), "alpha_infantry")["target"] is None:
-            break
-    assert session.objective_status_snapshot()["motorized_to_landing_pad"] is False
+    session._enemy_groups = []
+    session.tick()
 
-    motorized = _unit_by_id(session.units_snapshot(), "bravo_mechanized")
-    session.handle_left_click(_unit_center(motorized))
-    session.handle_left_click(motorized_target)
-    for _ in range(3000):
-        session.tick()
-        if _unit_by_id(session.units_snapshot(), "bravo_mechanized")["target"] is None:
-            break
-    assert session.objective_status_snapshot()["motorized_to_landing_pad"] is True
+    assert session.objective_status_snapshot()["landing_pad_cleared"] is True
 
 
 def test_reset_clears_units_selection_and_objective_progress() -> None:
     session = create_default_game_session()
     session.update_map_dimensions(width=960, height=640)
     session.tick()
-    motorized = _unit_by_id(session.units_snapshot(), "bravo_mechanized")
-    landing_pad = next(obj for obj in session.map_objects_snapshot() if obj["id"] == "landing_pad")
-    left, top, right, bottom = landing_pad["bounds"]
-    center = ((left + right) // 2, (top + bottom) // 2)
-
-    session.handle_left_click(_unit_center(motorized))
-    session.handle_left_click(center)
-    for _ in range(3000):
-        session.tick()
-        if session.objective_status_snapshot()["motorized_to_landing_pad"]:
-            break
-    assert session.objective_status_snapshot()["motorized_to_landing_pad"] is True
+    session._enemy_groups = []
+    session.tick()
+    assert session.objective_status_snapshot()["landing_pad_cleared"] is True
 
     session.reset()
     session.update_map_dimensions(width=960, height=640)
     session.tick()
 
     assert session.selected_unit_id() is None
-    assert session.objective_status_snapshot()["motorized_to_landing_pad"] is False
+    assert session.objective_status_snapshot()["landing_pad_cleared"] is False
+
+
+def test_recon_site_investigation_removes_site_and_reveals_reinforcement_when_roll_hits() -> None:
+    session = create_default_game_session(search_roll_provider=lambda: 0.0)
+    session.update_map_dimensions(width=960, height=640)
+    session.tick()
+    recon_site = next(obj for obj in session.map_objects_snapshot() if obj["id"] == "recon_site_1")
+    left, top, right, bottom = recon_site["bounds"]
+    alpha = session._find_unit_by_id("alpha_infantry")
+    assert alpha is not None
+    alpha.position = ((left + right) / 2.0, (top + bottom) / 2.0)
+
+    session.tick()
+
+    assert "recon_site_1" not in {obj["id"] for obj in session.map_objects_snapshot()}
+    assert session._find_unit_by_id("charlie_infantry") is not None
+    assert session.objective_status_snapshot()["find_first_missing_detachment"] is True
+
+
+def test_recon_search_finds_exactly_two_missing_detachments_with_lazy_rolls() -> None:
+    rolls = iter([0.9, 0.0, 0.9, 0.0])
+    session = create_default_game_session(search_roll_provider=lambda: next(rolls))
+    session.update_map_dimensions(width=960, height=640)
+    session.tick()
+    alpha = session._find_unit_by_id("alpha_infantry")
+    assert alpha is not None
+
+    for site_id in ("recon_site_1", "recon_site_2", "recon_site_3", "recon_site_4"):
+        site = next(obj for obj in session.map_objects_snapshot() if obj["id"] == site_id)
+        left, top, right, bottom = site["bounds"]
+        alpha.position = ((left + right) / 2.0, (top + bottom) / 2.0)
+        session.tick()
+
+    found_unit_ids = {unit["unit_id"] for unit in session.units_snapshot()}
+    assert {"charlie_infantry", "delta_infantry"}.issubset(found_unit_ids)
+    assert session.objective_status_snapshot()["find_second_missing_detachment"] is True
+
+
+def test_snapshot_includes_reports_when_main_objectives_are_completed() -> None:
+    session = create_default_game_session(search_roll_provider=lambda: 0.0)
+    session.update_map_dimensions(width=960, height=640)
+    session.tick()
+
+    session._enemy_groups = []
+    session.tick()
+    session._objective_status["landing_pad_cleared"] = True
+    session._selected_unit_id = "bravo_mechanized"
+    session.handle_supply_route(source_object_id="landing_pad", destination_object_id="hq")
+    session.tick()
+
+    first_recon_site = next(obj for obj in session.map_objects_snapshot() if obj["id"] == "recon_site_1")
+    alpha = session._find_unit_by_id("alpha_infantry")
+    assert alpha is not None
+    left, top, right, bottom = first_recon_site["bounds"]
+    alpha.position = ((left + right) / 2.0, (top + bottom) / 2.0)
+    session.tick()
+
+    second_recon_site = next(obj for obj in session.map_objects_snapshot() if obj["id"] == "recon_site_2")
+    left, top, right, bottom = second_recon_site["bounds"]
+    alpha.position = ((left + right) / 2.0, (top + bottom) / 2.0)
+    session.tick()
+
+    assert session.snapshot().mission_reports == (
+        MissionReportSnapshot(
+            report_id="hq_report_secure_landing_pad_and_route",
+            title_key="mission.report.title",
+            message_key="mission.report.secure_landing_pad_and_route",
+        ),
+        MissionReportSnapshot(
+            report_id="hq_report_find_first_missing_detachment",
+            title_key="mission.report.title",
+            message_key="mission.report.find_first_missing_detachment",
+        ),
+        MissionReportSnapshot(
+            report_id="hq_report_find_second_missing_detachment",
+            title_key="mission.report.title",
+            message_key="mission.report.find_second_missing_detachment",
+        ),
+    )
 
 
 def test_update_map_dimensions_ignores_non_positive_values() -> None:
@@ -805,7 +906,12 @@ def test_reset_clears_runtime_state_but_keeps_map_layout() -> None:
     assert session.units_snapshot() == []
     assert session.selected_unit_id() is None
     assert session.map_objects_snapshot() == map_layout_before_reset
-    assert session.objective_status_snapshot() == {"motorized_to_landing_pad": False}
+    assert session.objective_status_snapshot() == {
+        "landing_pad_cleared": False,
+        "supply_route_to_hq": False,
+        "find_first_missing_detachment": False,
+        "find_second_missing_detachment": False,
+    }
 
 
 def test_reset_allows_reinitialization_without_resizing_map() -> None:
@@ -847,11 +953,28 @@ def test_init_sets_expected_internal_defaults() -> None:
     assert session._selected_unit_id is None
     assert session._units_initialized is False
     assert session._last_supply_update_at is None
-    assert session._objective_status == {"motorized_to_landing_pad": False}
+    assert session._objective_status == {
+        "landing_pad_cleared": False,
+        "supply_route_to_hq": False,
+        "find_first_missing_detachment": False,
+        "find_second_missing_detachment": False,
+    }
     assert session._objective_definitions == (
         {
-            "objective_id": "motorized_to_landing_pad",
-            "description_key": "mission.objective.motorized_to_landing_pad",
+            "objective_id": "landing_pad_cleared",
+            "description_key": "mission.objective.landing_pad_cleared",
+        },
+        {
+            "objective_id": "supply_route_to_hq",
+            "description_key": "mission.objective.supply_route_to_hq",
+        },
+        {
+            "objective_id": "find_first_missing_detachment",
+            "description_key": "mission.objective.find_first_missing_detachment",
+        },
+        {
+            "objective_id": "find_second_missing_detachment",
+            "description_key": "mission.objective.find_second_missing_detachment",
         },
     )
 
@@ -873,7 +996,12 @@ def test_reset_restores_internal_runtime_state_to_defaults() -> None:
     assert session._selected_unit_id is None
     assert session._units_initialized is False
     assert session._last_supply_update_at is None
-    assert session._objective_status == {"motorized_to_landing_pad": False}
+    assert session._objective_status == {
+        "landing_pad_cleared": False,
+        "supply_route_to_hq": False,
+        "find_first_missing_detachment": False,
+        "find_second_missing_detachment": False,
+    }
 
 
 def test_update_map_dimensions_coerces_dimensions_to_ints() -> None:
@@ -1418,6 +1546,7 @@ def test_handle_supply_route_replaces_existing_route_resets_cargo_and_targets_pi
     session = create_default_game_session()
     session.update_map_dimensions(width=960, height=640)
     session.tick()
+    session._objective_status["landing_pad_cleared"] = True
     motorized = session._find_unit_by_id("bravo_mechanized")
     assert motorized is not None
 
@@ -1445,6 +1574,7 @@ def test_handle_supply_route_initializes_new_route_with_to_pickup_phase_before_r
     session = create_default_game_session()
     session.update_map_dimensions(width=960, height=640)
     session.tick()
+    session._objective_status["landing_pad_cleared"] = True
     session._selected_unit_id = "bravo_mechanized"
     captured_phases: list[str | None] = []
     original_refresh = session._refresh_supply_route
@@ -1498,7 +1628,7 @@ def test_bases_snapshot_projects_sorted_resources_and_totals() -> None:
 
 def test_landing_pad_and_transport_snapshots_include_transport_state_and_skip_empty_pads() -> None:
     session = create_default_game_session()
-    session._objective_status["motorized_to_landing_pad"] = True
+    session._objective_status["landing_pad_cleared"] = True
     active_transport = SupplyTransportState(
         transport_id="landing_pad_supply",
         transport_type_id="light_supply_helicopter",
@@ -1521,7 +1651,7 @@ def test_landing_pad_and_transport_snapshots_include_transport_state_and_skip_em
             object_id="landing_pad",
             pad_size="large",
             capacity=180,
-            secured_by_objective_id="motorized_to_landing_pad",
+            secured_by_objective_id="landing_pad_cleared",
             resources={"fuel": 3, "mre": 4, "ammo": 5},
             next_transport_eta_seconds=2.2,
             active_transport=active_transport,
@@ -1617,7 +1747,7 @@ def test_snapshot_includes_supply_related_subsnapshots() -> None:
     session = create_default_game_session()
     session.update_map_dimensions(width=960, height=640)
     session.tick()
-    session._objective_status["motorized_to_landing_pad"] = True
+    session._objective_status["landing_pad_cleared"] = True
     motorized = session._find_unit_by_id("bravo_mechanized")
     assert motorized is not None
     motorized.carried_resources = {"fuel": 2, "mre": 1, "ammo": 0}
@@ -1791,7 +1921,7 @@ def test_update_landing_pad_supply_clears_unsecured_transport_state() -> None:
         object_id="landing_pad",
         pad_size="small",
         capacity=90,
-        secured_by_objective_id="motorized_to_landing_pad",
+        secured_by_objective_id="landing_pad_cleared",
         resources={"fuel": 1, "mre": 2, "ammo": 3},
         next_transport_eta_seconds=12.0,
         active_transport=SupplyTransportState(
@@ -1817,12 +1947,12 @@ def test_update_landing_pad_supply_counts_down_eta_and_starts_transport_once_int
     session = create_default_game_session()
     session._map_size = (960, 640)
     session._map_objects = [{"id": "landing_pad", "bounds": (720, 180, 792, 228)}]
-    session._objective_status["motorized_to_landing_pad"] = True
+    session._objective_status["landing_pad_cleared"] = True
     landing_pad = LandingPadState(
         object_id="landing_pad",
         pad_size="small",
         capacity=90,
-        secured_by_objective_id="motorized_to_landing_pad",
+        secured_by_objective_id="landing_pad_cleared",
         next_transport_eta_seconds=10.0,
     )
 
@@ -1908,6 +2038,53 @@ def test_apply_transport_delivery_uses_fractional_distribution_without_exceeding
     session._apply_transport_delivery(landing_pad, "heavy_supply_helicopter")
 
     assert landing_pad.resources == {"fuel": 3, "mre": 2, "ammo": 2}
+
+
+def test_apply_transport_delivery_preserves_existing_amounts_and_initializes_missing_keys(monkeypatch) -> None:
+    session = create_default_game_session()
+    transport_type_id = "test_sparse_transport"
+    monkeypatch.setitem(
+        SUPPLY_TRANSPORT_TYPE_SPECS,
+        transport_type_id,
+        SupplyTransportTypeSpec(
+            type_id=transport_type_id,
+            cargo={"fuel": 1, "mre": 1, "ammo": 1},
+        ),
+    )
+    landing_pad = LandingPadState(
+        object_id="landing_pad",
+        pad_size="small",
+        capacity=20,
+        secured_by_objective_id="",
+        resources={"fuel": 5},
+    )
+
+    session._apply_transport_delivery(landing_pad, transport_type_id)
+
+    assert landing_pad.resources == {"fuel": 6, "mre": 1, "ammo": 1}
+
+
+def test_apply_transport_delivery_uses_each_remaining_slot_once() -> None:
+    session = create_default_game_session()
+    original_transport = SUPPLY_TRANSPORT_TYPE_SPECS["light_supply_helicopter"]
+    SUPPLY_TRANSPORT_TYPE_SPECS["light_supply_helicopter"] = SupplyTransportTypeSpec(
+        type_id="light_supply_helicopter",
+        cargo={"fuel": 2, "mre": 2, "ammo": 2},
+    )
+    landing_pad = LandingPadState(
+        object_id="landing_pad",
+        pad_size="small",
+        capacity=2,
+        secured_by_objective_id="",
+        resources={"fuel": 0, "mre": 0, "ammo": 0},
+    )
+
+    try:
+        session._apply_transport_delivery(landing_pad, "light_supply_helicopter")
+    finally:
+        SUPPLY_TRANSPORT_TYPE_SPECS["light_supply_helicopter"] = original_transport
+
+    assert landing_pad.resources == {"fuel": 1, "mre": 1, "ammo": 0}
 
 
 def test_refresh_supply_route_targets_updates_pickup_and_delivery_targets_for_all_routes() -> None:
@@ -2056,7 +2233,7 @@ def test_landing_pad_security_center_target_and_tolerance_helpers_cover_edge_cas
         object_id="landing_pad",
         pad_size="small",
         capacity=90,
-        secured_by_objective_id="motorized_to_landing_pad",
+            secured_by_objective_id="landing_pad_cleared",
     )
     always_secured_pad = LandingPadState(
         object_id="other",
@@ -2067,7 +2244,7 @@ def test_landing_pad_security_center_target_and_tolerance_helpers_cover_edge_cas
 
     assert session._is_landing_pad_secured(secured_pad) is False
     assert session._is_landing_pad_secured(always_secured_pad) is True
-    session._objective_status["motorized_to_landing_pad"] = True
+    session._objective_status["landing_pad_cleared"] = True
     assert session._is_landing_pad_secured(secured_pad) is True
     assert session._map_object_center("landing_pad") == (30.0, 40.0)
     assert session._object_target_point("landing_pad", "mechanized_squad") == (30.0, 40.0)
@@ -2160,12 +2337,12 @@ def test_update_landing_pad_supply_refreshes_transport_geometry_even_when_elapse
     session = create_default_game_session()
     session._map_size = (960, 640)
     session._map_objects = [{"id": "landing_pad", "bounds": (720, 180, 792, 228)}]
-    session._objective_status["motorized_to_landing_pad"] = True
+    session._objective_status["landing_pad_cleared"] = True
     landing_pad = LandingPadState(
         object_id="landing_pad",
         pad_size="small",
         capacity=90,
-        secured_by_objective_id="motorized_to_landing_pad",
+        secured_by_objective_id="landing_pad_cleared",
         active_transport=SupplyTransportState(
             transport_id="t1",
             transport_type_id="light_supply_helicopter",
@@ -2186,6 +2363,39 @@ def test_update_landing_pad_supply_refreshes_transport_geometry_even_when_elapse
     assert active_transport.destination_position == (756.0, 204.0)
     assert active_transport.origin_position == session._transport_origin_for_destination((756.0, 204.0))
     assert active_transport.position != (1.0, 2.0)
+
+
+def test_update_landing_pad_supply_returns_after_exactly_consuming_elapsed_transport_time() -> None:
+    session = create_default_game_session()
+    session._objective_status["landing_pad_cleared"] = True
+    landing_pad = LandingPadState(
+        object_id="landing_pad",
+        pad_size="small",
+        capacity=90,
+        secured_by_objective_id="landing_pad_cleared",
+        active_transport=SupplyTransportState(
+            transport_id="t1",
+            transport_type_id="light_supply_helicopter",
+            target_object_id="landing_pad",
+            phase="outbound",
+            position=(1.0, 2.0),
+            seconds_remaining=1.0,
+            total_phase_seconds=6.0,
+            origin_position=(10.0, 20.0),
+            destination_position=(30.0, 40.0),
+        ),
+    )
+
+    def finish_transport(pad: LandingPadState, elapsed_seconds: float) -> None:
+        assert elapsed_seconds == 1.0
+        pad.active_transport = None
+
+    session._advance_transport = finish_transport  # type: ignore[method-assign]
+
+    session._update_landing_pad_supply(landing_pad, elapsed_seconds=1.0)
+
+    assert landing_pad.active_transport is None
+    assert landing_pad.next_transport_eta_seconds is None
 
 
 def test_update_landing_pad_supply_advances_exactly_one_second_of_active_transport() -> None:
@@ -2217,6 +2427,39 @@ def test_update_landing_pad_supply_advances_exactly_one_second_of_active_transpo
     assert active_transport.position == (30.0, 42.0)
 
 
+def test_update_landing_pad_supply_consumes_one_second_of_leftover_eta_after_transport_finishes() -> None:
+    session = create_default_game_session()
+    session._objective_status["landing_pad_cleared"] = True
+    landing_pad = LandingPadState(
+        object_id="landing_pad",
+        pad_size="small",
+        capacity=90,
+        secured_by_objective_id="landing_pad_cleared",
+        active_transport=SupplyTransportState(
+            transport_id="t1",
+            transport_type_id="light_supply_helicopter",
+            target_object_id="landing_pad",
+            phase="outbound",
+            position=(1.0, 2.0),
+            seconds_remaining=1.0,
+            total_phase_seconds=6.0,
+            origin_position=(10.0, 20.0),
+            destination_position=(30.0, 40.0),
+        ),
+    )
+
+    def finish_transport(pad: LandingPadState, elapsed_seconds: float) -> None:
+        assert elapsed_seconds == 1.0
+        pad.active_transport = None
+
+    session._advance_transport = finish_transport  # type: ignore[method-assign]
+
+    session._update_landing_pad_supply(landing_pad, elapsed_seconds=2.0)
+
+    assert landing_pad.active_transport is None
+    assert landing_pad.next_transport_eta_seconds == 44.0
+
+
 def test_update_landing_pad_supply_uses_leftover_elapsed_time_to_start_next_eta_countdown() -> None:
     session = create_default_game_session()
     landing_pad = LandingPadState(
@@ -2242,6 +2485,35 @@ def test_update_landing_pad_supply_uses_leftover_elapsed_time_to_start_next_eta_
 
     assert landing_pad.active_transport is None
     assert landing_pad.next_transport_eta_seconds == 44.0
+
+
+def test_advance_transport_keeps_inbound_phase_while_one_second_remains() -> None:
+    session = create_default_game_session()
+    landing_pad = LandingPadState(
+        object_id="landing_pad",
+        pad_size="small",
+        capacity=90,
+        secured_by_objective_id="",
+        active_transport=SupplyTransportState(
+            transport_id="t1",
+            transport_type_id="light_supply_helicopter",
+            target_object_id="landing_pad",
+            phase="inbound",
+            position=(0.0, 0.0),
+            seconds_remaining=2.0,
+            total_phase_seconds=10.0,
+            origin_position=(0.0, 0.0),
+            destination_position=(10.0, 0.0),
+        ),
+    )
+
+    session._advance_transport(landing_pad, elapsed_seconds=1.0)
+
+    active_transport = landing_pad.active_transport
+    assert active_transport is not None
+    assert active_transport.phase == "inbound"
+    assert active_transport.seconds_remaining == 1.0
+    assert active_transport.position == (9.0, 0.0)
 
 
 def test_advance_transport_updates_inbound_position_before_arrival() -> None:
@@ -2473,6 +2745,7 @@ def test_update_map_dimensions_accepts_minimum_positive_dimensions() -> None:
 def test_units_snapshot_exposes_active_supply_route_id_for_routed_unit() -> None:
     session = create_default_game_session()
     session.update_map_dimensions(width=960, height=640)
+    session._objective_status["landing_pad_cleared"] = True
     session._selected_unit_id = "bravo_mechanized"
 
     session.handle_supply_route(source_object_id="landing_pad", destination_object_id="hq")
@@ -2526,6 +2799,7 @@ def test_snapshot_projects_current_bounds_positions_and_route_ids() -> None:
     session = create_default_game_session()
     session.update_map_dimensions(width=960, height=640)
     session.tick()
+    session._objective_status["landing_pad_cleared"] = True
     session._selected_unit_id = "bravo_mechanized"
     session.handle_supply_route(source_object_id="landing_pad", destination_object_id="hq")
 
@@ -2705,6 +2979,52 @@ def test_update_combats_removes_stale_combat_when_unit_or_enemy_disappears() -> 
     assert session._combats == {}
 
 
+def test_update_combats_removes_combat_when_enemy_group_disappears_but_unit_still_exists() -> None:
+    session = create_default_game_session()
+    session._units = [UnitState(unit_id="u1", unit_type_id="infantry_squad", position=(50.0, 50.0))]
+    session._combats = {
+        "missing-enemy": CombatState(
+            combat_id="missing-enemy",
+            unit_id="u1",
+            enemy_group_id="ghost_enemy",
+            seconds_remaining=24.0,
+            total_seconds=24.0,
+            seconds_until_next_exchange=6.0,
+        )
+    }
+
+    session._update_combats(elapsed_seconds=4.0)
+
+    assert session._combats == {}
+
+
+def test_update_combats_waits_for_exchange_boundary_before_applying_attrition() -> None:
+    session = create_default_game_session()
+    unit = UnitState(unit_id="u1", unit_type_id="infantry_squad", position=(50.0, 50.0), ammo=30, morale=20)
+    enemy_group = ZombieGroupState(group_id="e1", position=(50.0, 50.0), personnel=5)
+    session._units = [unit]
+    session._enemy_groups = [enemy_group]
+    session._combats = {
+        "engagement": CombatState(
+            combat_id="engagement",
+            unit_id="u1",
+            enemy_group_id="e1",
+            seconds_remaining=24.0,
+            total_seconds=24.0,
+            seconds_until_next_exchange=6.0,
+        )
+    }
+
+    session._update_combats(elapsed_seconds=5.0)
+
+    combat = session._combats["engagement"]
+    assert combat.seconds_remaining == 19.0
+    assert combat.seconds_until_next_exchange == 1.0
+    assert enemy_group.personnel == 5
+    assert unit.ammo == 30
+    assert unit.morale == 20
+
+
 def test_update_combats_resolves_on_enemy_elimination_even_when_time_remains() -> None:
     session = create_default_game_session()
     unit = UnitState(
@@ -2774,6 +3094,37 @@ def test_update_combats_keeps_engagement_active_when_enemy_survives_and_timer_st
     assert combat.seconds_until_next_exchange == 2.0
 
 
+def test_update_combats_keeps_engagement_active_when_attrition_leaves_one_enemy_remaining() -> None:
+    session = create_default_game_session()
+    unit = UnitState(
+        unit_id="u1",
+        unit_type_id="mechanized_squad",
+        position=(50.0, 50.0),
+        ammo=40,
+        morale=20,
+    )
+    enemy_group = ZombieGroupState(group_id="e1", position=(50.0, 50.0), personnel=3)
+    session._units = [unit]
+    session._enemy_groups = [enemy_group]
+    session._combats = {
+        "engagement": CombatState(
+            combat_id="engagement",
+            unit_id="u1",
+            enemy_group_id="e1",
+            seconds_remaining=12.0,
+            total_seconds=24.0,
+            seconds_until_next_exchange=1.0,
+        )
+    }
+
+    session._update_combats(elapsed_seconds=1.0)
+
+    combat = session._combats["engagement"]
+    assert combat.seconds_remaining == 11.0
+    assert combat.seconds_until_next_exchange == 6.0
+    assert enemy_group.personnel == 1
+
+
 def test_update_combats_applies_final_exchange_when_timer_hits_zero_on_exchange_boundary() -> None:
     session = create_default_game_session()
     unit = UnitState(
@@ -2814,6 +3165,123 @@ def test_update_combats_applies_final_exchange_when_timer_hits_zero_on_exchange_
     )
 
 
+def test_update_combats_continues_after_resolving_earlier_combat() -> None:
+    session = create_default_game_session()
+    first_unit = UnitState(unit_id="u1", unit_type_id="mechanized_squad", position=(50.0, 50.0), ammo=40, morale=20)
+    second_unit = UnitState(unit_id="u2", unit_type_id="infantry_squad", position=(60.0, 60.0), ammo=30, morale=20)
+    first_enemy = ZombieGroupState(group_id="e1", position=(50.0, 50.0), personnel=1)
+    second_enemy = ZombieGroupState(group_id="e2", position=(60.0, 60.0), personnel=5)
+    session._units = [first_unit, second_unit]
+    session._enemy_groups = [first_enemy, second_enemy]
+    session._combats = {
+        "a_first": CombatState(
+            combat_id="a_first",
+            unit_id="u1",
+            enemy_group_id="e1",
+            seconds_remaining=24.0,
+            total_seconds=24.0,
+            seconds_until_next_exchange=1.0,
+        ),
+        "z_second": CombatState(
+            combat_id="z_second",
+            unit_id="u2",
+            enemy_group_id="e2",
+            seconds_remaining=24.0,
+            total_seconds=24.0,
+            seconds_until_next_exchange=6.0,
+        ),
+    }
+
+    session._update_combats(elapsed_seconds=2.0)
+
+    assert "a_first" not in session._combats
+    assert session._combats["z_second"].seconds_remaining == 22.0
+    assert session._combats["z_second"].seconds_until_next_exchange == 4.0
+
+
+def test_update_combats_keeps_combat_alive_for_last_second_after_exchange() -> None:
+    session = create_default_game_session()
+    unit = UnitState(unit_id="u1", unit_type_id="infantry_squad", position=(50.0, 50.0), ammo=30, morale=20)
+    enemy_group = ZombieGroupState(group_id="e1", position=(50.0, 50.0), personnel=10)
+    session._units = [unit]
+    session._enemy_groups = [enemy_group]
+    session._combats = {
+        "engagement": CombatState(
+            combat_id="engagement",
+            unit_id="u1",
+            enemy_group_id="e1",
+            seconds_remaining=7.0,
+            total_seconds=24.0,
+            seconds_until_next_exchange=6.0,
+        )
+    }
+
+    session._update_combats(elapsed_seconds=6.0)
+
+    combat = session._combats["engagement"]
+    assert combat.seconds_remaining == 1.0
+    assert combat.seconds_until_next_exchange == 1.0
+    assert enemy_group.personnel == 9
+
+
+def test_update_combats_resolves_when_timer_reaches_zero_between_exchanges() -> None:
+    session = create_default_game_session()
+    unit = UnitState(unit_id="u1", unit_type_id="infantry_squad", position=(50.0, 50.0), ammo=30, morale=20)
+    enemy_group = ZombieGroupState(group_id="e1", position=(50.0, 50.0), personnel=5)
+    session._units = [unit]
+    session._enemy_groups = [enemy_group]
+    session._combats = {
+        "engagement": CombatState(
+            combat_id="engagement",
+            unit_id="u1",
+            enemy_group_id="e1",
+            seconds_remaining=1.0,
+            total_seconds=24.0,
+            seconds_until_next_exchange=6.0,
+        )
+    }
+
+    session._update_combats(elapsed_seconds=1.0)
+
+    assert session._combats == {}
+    assert session._enemy_groups == []
+
+
+def test_update_combats_zero_step_on_one_combat_does_not_block_later_combats() -> None:
+    session = create_default_game_session()
+    first_unit = UnitState(unit_id="u1", unit_type_id="infantry_squad", position=(50.0, 50.0), ammo=30, morale=20)
+    second_unit = UnitState(unit_id="u2", unit_type_id="infantry_squad", position=(60.0, 60.0), ammo=30, morale=20)
+    first_enemy = ZombieGroupState(group_id="e1", position=(50.0, 50.0), personnel=5)
+    second_enemy = ZombieGroupState(group_id="e2", position=(60.0, 60.0), personnel=5)
+    session._units = [first_unit, second_unit]
+    session._enemy_groups = [first_enemy, second_enemy]
+    session._combats = {
+        "a_first": CombatState(
+            combat_id="a_first",
+            unit_id="u1",
+            enemy_group_id="e1",
+            seconds_remaining=5.0,
+            total_seconds=24.0,
+            seconds_until_next_exchange=0.0,
+        ),
+        "z_second": CombatState(
+            combat_id="z_second",
+            unit_id="u2",
+            enemy_group_id="e2",
+            seconds_remaining=24.0,
+            total_seconds=24.0,
+            seconds_until_next_exchange=6.0,
+        ),
+    }
+
+    session._update_combats(elapsed_seconds=2.0)
+
+    assert session._combats["a_first"].seconds_until_next_exchange == 5.0
+    assert first_enemy.personnel == 4
+    assert session._combats["z_second"].seconds_remaining == 22.0
+    assert session._combats["z_second"].seconds_until_next_exchange == 4.0
+
+
 def test_combat_notifications_expire_after_display_window() -> None:
     session = create_default_game_session()
     session._combat_notifications = [
@@ -2839,6 +3307,29 @@ def test_combat_notifications_expire_after_display_window() -> None:
 
     session._update_combat_notifications(elapsed_seconds=2.5)
     assert session.combat_notifications_snapshot() == ()
+
+
+def test_combat_notifications_snapshot_keeps_zero_seconds_without_fallback_to_one() -> None:
+    session = create_default_game_session()
+    session._combat_notifications = [
+        CombatNotificationState(
+            notification_id="notice",
+            unit_name="alpha",
+            enemy_group_name="zulu",
+            phase="started",
+            seconds_remaining=0.0,
+        )
+    ]
+
+    assert session.combat_notifications_snapshot() == (
+        CombatNotificationSnapshot(
+            notification_id="notice",
+            unit_name="alpha",
+            enemy_group_name="zulu",
+            phase="started",
+            seconds_remaining=0,
+        ),
+    )
 
 
 def test_apply_combat_attrition_uses_expected_suppression_for_infantry_and_mechanized_units() -> None:
@@ -2887,6 +3378,7 @@ def test_bounds_overlap_requires_axis_overlap_in_each_direction() -> None:
 def test_refresh_supply_route_removes_route_when_required_objects_disappear() -> None:
     session = create_default_game_session()
     session.update_map_dimensions(width=960, height=640)
+    session._objective_status["landing_pad_cleared"] = True
     session._selected_unit_id = "bravo_mechanized"
     session.handle_supply_route(source_object_id="landing_pad", destination_object_id="hq")
     route = next(iter(session._supply_routes.values()))
@@ -2897,10 +3389,222 @@ def test_refresh_supply_route_removes_route_when_required_objects_disappear() ->
     assert session.supply_routes_snapshot() == ()
 
 
+def test_refresh_supply_route_removes_route_when_unit_disappears() -> None:
+    session = create_default_game_session()
+    route = SupplyRouteState(
+        route_id="missing-unit-route",
+        unit_id="ghost_unit",
+        source_object_id="landing_pad",
+        destination_object_id="hq",
+        phase="to_pickup",
+    )
+    session._supply_routes = {route.route_id: route}
+
+    session._refresh_supply_route(route)
+
+    assert session._supply_routes == {}
+
+
+def test_update_supply_routes_continues_after_removing_missing_unit_route() -> None:
+    session = create_default_game_session()
+    session._units = [UnitState(unit_id="u2", unit_type_id="mechanized_squad", position=(10.0, 10.0))]
+    handled_route_ids: list[str] = []
+    session._refresh_supply_route = lambda route: handled_route_ids.append(route.route_id)  # type: ignore[method-assign]
+    session._supply_routes = {
+        "a-missing": SupplyRouteState(
+            route_id="a-missing",
+            unit_id="ghost_unit",
+            source_object_id="landing_pad",
+            destination_object_id="hq",
+            phase="to_pickup",
+        ),
+        "z-present": SupplyRouteState(
+            route_id="z-present",
+            unit_id="u2",
+            source_object_id="landing_pad",
+            destination_object_id="hq",
+            phase="to_pickup",
+        ),
+    }
+
+    session._update_supply_routes()
+
+    assert "a-missing" not in session._supply_routes
+    assert handled_route_ids == ["z-present"]
+
+
 def test_is_valid_supply_route_pair_requires_both_source_and_destination() -> None:
     session = create_default_game_session()
     session.update_map_dimensions(width=960, height=640)
+    session._objective_status["landing_pad_cleared"] = True
 
     assert session._is_valid_supply_route_pair(source_object_id="landing_pad", destination_object_id="hq") is True
     assert session._is_valid_supply_route_pair(source_object_id="landing_pad", destination_object_id="missing") is False
     assert session._is_valid_supply_route_pair(source_object_id="missing", destination_object_id="hq") is False
+
+
+def test_tick_passes_runtime_snapshots_and_elapsed_times_to_subsystems() -> None:
+    class RecordingEvaluator:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def evaluate(self, **kwargs):
+            self.calls.append(kwargs)
+            return dict(kwargs["current_status"])
+
+    session = create_default_game_session()
+    session.update_map_dimensions(width=960, height=640)
+    evaluator = RecordingEvaluator()
+    session._mission_objectives_evaluator = evaluator
+    recorded: dict[str, object] = {}
+
+    session._consume_supply_elapsed_seconds = lambda: 7.5
+    session._consume_combat_elapsed_seconds = lambda: 3.25
+    session._update_combat_notifications = lambda *, elapsed_seconds: recorded.setdefault(
+        "combat_notifications", elapsed_seconds
+    )
+    session._update_combats = lambda *, elapsed_seconds: recorded.setdefault("combats", elapsed_seconds)
+    session._update_units_position = lambda: recorded.setdefault("units_position", True)
+    session._start_combats_for_colliding_units = lambda: recorded.setdefault("start_combats", True)
+    session._investigate_recon_sites = lambda: recorded.setdefault("investigate_recon_sites", True)
+    session._update_main_objective_reports = lambda: recorded.setdefault("main_objective_reports", True)
+    session._update_supply_network = lambda *, elapsed_seconds: recorded.setdefault(
+        "supply_network", elapsed_seconds
+    )
+    session._update_supply_routes = lambda: recorded.setdefault("supply_routes", True)
+
+    session.tick()
+
+    assert recorded == {
+        "combat_notifications": 3.25,
+        "combats": 3.25,
+        "units_position": True,
+        "start_combats": True,
+        "investigate_recon_sites": True,
+        "main_objective_reports": True,
+        "supply_network": 7.5,
+        "supply_routes": True,
+    }
+    assert len(evaluator.calls) == 1
+    assert evaluator.calls[0]["units"] == session.units_snapshot()
+    assert evaluator.calls[0]["map_objects"] == session.map_objects_snapshot()
+    assert evaluator.calls[0]["current_status"] == session.objective_status_snapshot()
+    assert evaluator.calls[0]["supply_routes"] == session.supply_routes_state_snapshot()
+    assert evaluator.calls[0]["enemy_groups"] == session.enemy_groups_state_snapshot()
+    assert evaluator.calls[0]["discovered_reinforcements_count"] == 0
+
+
+def test_enemy_groups_state_snapshot_exposes_exact_keys_for_objective_evaluation() -> None:
+    session = create_default_game_session()
+    session._enemy_groups = [
+        ZombieGroupState(
+            group_id="z1",
+            position=(120.0, 230.0),
+            name="Patrol",
+            personnel=5,
+        )
+    ]
+
+    assert session.enemy_groups_state_snapshot() == [
+        {
+            "group_id": "z1",
+            "position": (120.0, 230.0),
+            "name": "Patrol",
+            "personnel": 5,
+        }
+    ]
+
+
+def test_supply_routes_state_snapshot_exposes_route_id_and_exact_keys() -> None:
+    session = create_default_game_session()
+    session._supply_routes = {
+        "route-1": SupplyRouteState(
+            route_id="route-1",
+            unit_id="bravo_mechanized",
+            source_object_id="landing_pad",
+            destination_object_id="hq",
+            phase="to_pickup",
+        )
+    }
+
+    assert session.supply_routes_state_snapshot() == [
+        {
+            "route_id": "route-1",
+            "unit_id": "bravo_mechanized",
+            "source_object_id": "landing_pad",
+            "destination_object_id": "hq",
+            "phase": "to_pickup",
+        }
+    ]
+
+
+def test_reset_clears_internal_combat_notifications_list() -> None:
+    session = create_default_game_session()
+    session._combat_notifications = [
+        CombatNotificationState(
+            notification_id="notice",
+            unit_name="alpha",
+            enemy_group_name="zulu",
+            phase="started",
+            seconds_remaining=2.0,
+        )
+    ]
+
+    session.reset()
+
+    assert session._combat_notifications == []
+    assert session.combat_notifications_snapshot() == ()
+
+
+def test_recon_investigation_without_unit_on_site_does_not_refresh_map_objects() -> None:
+    session = create_default_game_session(search_roll_provider=lambda: 0.0)
+    session.update_map_dimensions(width=960, height=640)
+    refresh_calls: list[str] = []
+    session._refresh_dynamic_map_objects = lambda: refresh_calls.append("refresh")
+
+    session._investigate_recon_sites()
+
+    assert refresh_calls == []
+    assert session._investigated_recon_site_ids == set()
+
+
+def test_recon_investigation_skips_missing_site_bounds_and_continues_to_later_site() -> None:
+    session = create_default_game_session(search_roll_provider=lambda: 1.0)
+    session.update_map_dimensions(width=960, height=640)
+    session._map_objects = [obj for obj in session._map_objects if obj["id"] != "recon_site_1"]
+    site = next(obj for obj in session.map_objects_snapshot() if obj["id"] == "recon_site_2")
+    left, top, right, bottom = site["bounds"]
+    alpha = session._find_unit_by_id("alpha_infantry")
+    assert alpha is not None
+    alpha.position = ((left + right) / 2.0, (top + bottom) / 2.0)
+
+    session._investigate_recon_sites()
+
+    assert "recon_site_2" in session._investigated_recon_site_ids
+    assert "recon_site_2" not in {obj["id"] for obj in session.map_objects_snapshot()}
+
+
+def test_recon_investigation_checks_later_sites_when_first_site_is_empty() -> None:
+    session = create_default_game_session(search_roll_provider=lambda: 1.0)
+    session.update_map_dimensions(width=960, height=640)
+    site = next(obj for obj in session.map_objects_snapshot() if obj["id"] == "recon_site_2")
+    left, top, right, bottom = site["bounds"]
+    alpha = session._find_unit_by_id("alpha_infantry")
+    assert alpha is not None
+    alpha.position = ((left + right) / 2.0, (top + bottom) / 2.0)
+
+    session._investigate_recon_sites()
+
+    assert "recon_site_2" in session._investigated_recon_site_ids
+    assert "recon_site_2" not in {obj["id"] for obj in session.map_objects_snapshot()}
+
+
+def test_set_unit_target_assigns_tuple_path_for_non_matching_destination() -> None:
+    session = create_default_game_session()
+    session._map_size = (960, 640)
+    unit = UnitState(unit_id="u1", unit_type_id="infantry_squad", position=(100.0, 100.0))
+
+    session._set_unit_target(unit, (140.0, 100.0), road_mode="off")
+
+    assert unit.target == (140.0, 100.0)
+    assert unit.path == ((140.0, 100.0),)

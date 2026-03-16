@@ -5,7 +5,10 @@
 .coverage
 .codex-*
 .tmp-pip-audit
+.tmp-pip-audit-ci
 .tmp-pip-audit-run
+.tmp-pytest-cache
+.tmp-pytest-cache-*
 .tmp-pytest-local
 pytest-temp-run-*
 tmps*

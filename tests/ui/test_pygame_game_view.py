@@ -163,6 +163,7 @@ def _sample_game_state(
         map_objects=(
             MapObjectSnapshot(object_id="hq", bounds=(160, 200, 244, 256)),
             MapObjectSnapshot(object_id="landing_pad", bounds=(700, 170, 772, 218)),
+            MapObjectSnapshot(object_id="recon_site_1", bounds=(396, 118, 454, 162)),
         ),
         roads=(
             RoadSnapshot(
@@ -233,14 +234,38 @@ def _sample_game_state(
         selected_unit_id="alpha_infantry",
         objective_definitions=(
             MissionObjectiveDefinitionSnapshot(
-                objective_id="motorized_to_landing_pad",
-                description_key="mission.objective.motorized_to_landing_pad",
+                objective_id="landing_pad_cleared",
+                description_key="mission.objective.landing_pad_cleared",
+            ),
+            MissionObjectiveDefinitionSnapshot(
+                objective_id="supply_route_to_hq",
+                description_key="mission.objective.supply_route_to_hq",
+            ),
+            MissionObjectiveDefinitionSnapshot(
+                objective_id="find_first_missing_detachment",
+                description_key="mission.objective.find_first_missing_detachment",
+            ),
+            MissionObjectiveDefinitionSnapshot(
+                objective_id="find_second_missing_detachment",
+                description_key="mission.objective.find_second_missing_detachment",
             ),
         ),
         objective_progress=(
             MissionObjectiveProgressSnapshot(
-                objective_id="motorized_to_landing_pad",
+                objective_id="landing_pad_cleared",
                 completed=objective_completed,
+            ),
+            MissionObjectiveProgressSnapshot(
+                objective_id="supply_route_to_hq",
+                completed=False,
+            ),
+            MissionObjectiveProgressSnapshot(
+                objective_id="find_first_missing_detachment",
+                completed=False,
+            ),
+            MissionObjectiveProgressSnapshot(
+                objective_id="find_second_missing_detachment",
+                completed=False,
             ),
         ),
         landing_pads=(
@@ -355,7 +380,7 @@ def test_apply_game_state_updates_cached_state(game_view) -> None:
 
     game_view.view.apply_game_state(snapshot=state)
 
-    assert {obj.object_id for obj in game_view.view._map_objects} == {"hq", "landing_pad"}
+    assert {obj.object_id for obj in game_view.view._map_objects} == {"hq", "landing_pad", "recon_site_1"}
     assert [road.road_id for road in game_view.view._roads] == ["main_supply_road"]
     assert set(game_view.view._bases) == {"hq"}
     assert set(game_view.view._landing_pads) == {"landing_pad"}
@@ -377,7 +402,8 @@ def test_render_draws_mission_objectives_panel(game_view) -> None:
 
     texts = _blitted_texts(game_view.screen)
     assert "mission.objectives.title" in texts
-    assert "[ ] mission.objective.motorized_to_landing_pad" in texts
+    assert "[ ] mission.objective.supply_route_to_hq" in texts
+    assert "[ ] mission.objective.find_first_missing_detachment" in texts
 
 
 def test_render_draws_strikethrough_for_completed_objective(game_view) -> None:
@@ -385,7 +411,7 @@ def test_render_draws_strikethrough_for_completed_objective(game_view) -> None:
     game_view.view.render(character_name="", show_running_hint=False)
 
     texts = _blitted_texts(game_view.screen)
-    assert "[x] mission.objective.motorized_to_landing_pad" in texts
+    assert "[x] mission.objective.landing_pad_cleared" in texts
     assert game_view.pygame.draw.line_calls >= 1
 
 
@@ -413,6 +439,17 @@ def test_render_shows_landing_pad_supply_details_in_tooltip(game_view) -> None:
     assert "game.map.object.landing_pad.status.inbound" in texts
     assert "game.map.object.landing_pad.capacity" in texts
     assert "game.map.object.landing_pad.resource_line" in texts
+
+
+def test_render_shows_recon_site_tooltip_when_hovered(game_view) -> None:
+    game_view.view.apply_game_state(snapshot=_sample_game_state())
+    game_view.pygame.mouse.position = (400, 130)
+
+    game_view.view.render(character_name="", show_running_hint=False)
+
+    texts = _blitted_texts(game_view.screen)
+    assert "game.map.object.recon_site.name" in texts
+    assert "game.map.object.recon_site.description" in texts
 
 
 def test_render_shows_unit_tooltip_when_hovering_over_unit(game_view) -> None:

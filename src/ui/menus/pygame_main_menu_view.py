@@ -66,6 +66,9 @@ class PygameMainMenuView:
         self._character_name = ""
         self._character_name_input = ""
         self._planned_supply_route_source_id: str | None = None
+        self._mission_report_queue: list[tuple[str, str, str]] = []
+        self._dismissed_mission_report_ids: set[str] = set()
+        self._active_mission_report: tuple[str, str, str] | None = None
         self._closed = False
 
     def _create_screen(self) -> Any:
@@ -85,6 +88,8 @@ class PygameMainMenuView:
             self._render_name_modal()
         elif self._mode == "welcome_modal":
             self._render_welcome_modal()
+        elif self._mode == "game_report_modal":
+            self._render_game_report_modal()
         elif self._mode == "game_context_menu":
             self._render_game_context_menu()
         elif self._mode == "game_unit_context_menu":
@@ -106,6 +111,8 @@ class PygameMainMenuView:
                 self._handle_name_modal_event(pygame_event, events)
             elif self._mode == "welcome_modal":
                 self._handle_welcome_modal_event(pygame_event, events)
+            elif self._mode == "game_report_modal":
+                self._handle_game_report_modal_event(pygame_event)
             elif self._mode == "game":
                 self._handle_game_event(pygame_event, events)
             elif self._mode == "game_context_menu":
@@ -119,6 +126,7 @@ class PygameMainMenuView:
 
         if self._mode in {
             "game",
+            "game_report_modal",
             "game_context_menu",
             "game_unit_context_menu",
             "game_supply_route_planning",
@@ -138,13 +146,25 @@ class PygameMainMenuView:
             self._context_menu_hitboxes = {}
             self._unit_context_menu_hitboxes = {}
             self._planned_supply_route_source_id = None
+            self._mission_report_queue = []
+            self._dismissed_mission_report_ids = set()
+            self._active_mission_report = None
             self._clear_right_mouse_hold()
             self._last_hint = None
             self._mode = "name_modal"
         elif isinstance(event, GameStateSynced):
             self._game_view.apply_game_state(snapshot=event.snapshot)
+            self._queue_mission_reports(event.snapshot.mission_reports)
             if self._mode == "game_unit_context_menu" and not self._game_view.selected_unit_can_create_supply_route():
                 self._close_unit_context_menu()
+            if self._mode in {
+                "game",
+                "game_context_menu",
+                "game_unit_context_menu",
+                "game_supply_route_planning",
+                "game_report_modal",
+            }:
+                self._open_next_mission_report_if_needed()
         elif isinstance(event, LoadGameFlowRouted):
             self._last_hint = text("flow.load_game.stub")
         elif isinstance(event, ExitFlowRouted):
@@ -356,6 +376,32 @@ class PygameMainMenuView:
         self._draw_text_in_rect(text("modal.button.ok"), self._font_hint, (238, 239, 243), ok_rect)
         self._modal_ok_hitbox = ok_rect
 
+    def _render_game_report_modal(self) -> None:
+        if self._active_mission_report is None:
+            return
+
+        pygame = self._pygame
+        _report_id, title_key, message_key = self._active_mission_report
+        modal_rect = self._draw_modal_shell(text(title_key))
+        content_rect = pygame.Rect(
+            modal_rect.left + 28,
+            modal_rect.top + 66,
+            modal_rect.width - 56,
+            modal_rect.height - 132,
+        )
+        self._draw_wrapped_text(
+            text(message_key),
+            self._font_hint,
+            (214, 224, 238),
+            content_rect,
+        )
+
+        ok_rect = pygame.Rect(modal_rect.centerx - 62, modal_rect.bottom - 58, 124, 38)
+        pygame.draw.rect(self._screen, (76, 128, 92), ok_rect, border_radius=6)
+        pygame.draw.rect(self._screen, (128, 138, 158), ok_rect, 2, border_radius=6)
+        self._draw_text_in_rect(text("modal.button.ok"), self._font_hint, (238, 239, 243), ok_rect)
+        self._modal_ok_hitbox = ok_rect
+
     def _draw_modal_shell(self, title: str) -> Any:
         pygame = self._pygame
         overlay = pygame.Surface(self._screen.get_size(), pygame.SRCALPHA)
@@ -550,6 +596,19 @@ class PygameMainMenuView:
         if pygame_event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
             self._enter_game()
 
+    def _handle_game_report_modal_event(self, pygame_event: Any) -> None:
+        pygame = self._pygame
+        if pygame_event.type == pygame.MOUSEBUTTONDOWN and pygame_event.button == 1:
+            if self._modal_ok_hitbox and self._modal_ok_hitbox.collidepoint(pygame_event.pos):
+                self._dismiss_active_mission_report()
+            return
+
+        if pygame_event.type != pygame.KEYDOWN:
+            return
+
+        if pygame_event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_KP_ENTER):
+            self._dismiss_active_mission_report()
+
     def _confirm_character_name(self) -> None:
         if not self._has_valid_character_name():
             return
@@ -565,6 +624,7 @@ class PygameMainMenuView:
         self._planned_supply_route_source_id = None
         self._clear_right_mouse_hold()
         self._mode = "game"
+        self._open_next_mission_report_if_needed()
 
     def _open_game_context_menu(self) -> None:
         self._unit_context_menu_hitboxes = {}
@@ -604,8 +664,40 @@ class PygameMainMenuView:
         self._unit_context_menu_hitboxes = {}
         self._modal_ok_hitbox = None
         self._planned_supply_route_source_id = None
+        self._active_mission_report = None
         self._clear_right_mouse_hold()
         self._mode = "menu"
+
+    def _queue_mission_reports(self, reports: tuple[Any, ...]) -> None:
+        for report in reports:
+            report_id = getattr(report, "report_id", "")
+            if not report_id or report_id in self._dismissed_mission_report_ids:
+                continue
+            queued_ids = {item[0] for item in self._mission_report_queue}
+            if self._active_mission_report is not None:
+                queued_ids.add(self._active_mission_report[0])
+            if report_id in queued_ids:
+                continue
+            self._mission_report_queue.append((report_id, report.title_key, report.message_key))
+
+    def _open_next_mission_report_if_needed(self) -> None:
+        if self._active_mission_report is not None or not self._mission_report_queue:
+            return
+        self._active_mission_report = self._mission_report_queue.pop(0)
+        self._modal_ok_hitbox = None
+        self._context_menu_hitboxes = {}
+        self._unit_context_menu_hitboxes = {}
+        self._planned_supply_route_source_id = None
+        self._clear_right_mouse_hold()
+        self._mode = "game_report_modal"
+
+    def _dismiss_active_mission_report(self) -> None:
+        if self._active_mission_report is not None:
+            self._dismissed_mission_report_ids.add(self._active_mission_report[0])
+        self._active_mission_report = None
+        self._modal_ok_hitbox = None
+        self._mode = "game"
+        self._open_next_mission_report_if_needed()
 
     def _supply_route_planning_state(self) -> dict[str, Any] | None:
         if self._mode != "game_supply_route_planning":
@@ -676,6 +768,36 @@ class PygameMainMenuView:
         x = rect.left + (rect.width - surface.get_width()) // 2
         y = rect.top + (rect.height - surface.get_height()) // 2
         self._screen.blit(surface, (x, y))
+
+    def _draw_wrapped_text(
+        self,
+        text: str,
+        font: Any,
+        color: tuple[int, int, int],
+        content_rect: Any,
+        line_spacing: int = 2,
+    ) -> None:
+        words = text.split()
+        if not words:
+            return
+
+        line_height = font.get_linesize()
+        x = content_rect.left
+        y = content_rect.top
+        word_index = 0
+        while word_index < len(words) and y + line_height <= content_rect.bottom:
+            line = words[word_index]
+            next_index = word_index + 1
+            while next_index < len(words):
+                candidate = f"{line} {words[next_index]}"
+                if font.size(candidate)[0] > content_rect.width:
+                    break
+                line = candidate
+                next_index += 1
+
+            self._draw_text_at(line, font, color, x, y)
+            word_index = next_index
+            y += line_height + line_spacing
 
     def _draw_wrapped_text_around_rect(
         self,
