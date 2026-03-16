@@ -76,6 +76,20 @@ Tylko testy architektury (PyTestArch):
 .\.venv\Scripts\python.exe -m pytest -q tests/architecture
 ```
 
+## Czyszczenie lokalnych artefaktow
+
+Aby usunac lokalne cache i wygenerowane artefakty (`__pycache__`, cache testow, raporty CI, katalog `mutants`), uruchom:
+
+```bash
+.\.venv\Scripts\python.exe scripts/cleanup_local_artifacts.py
+```
+
+Tryb podgladu bez usuwania:
+
+```bash
+.\.venv\Scripts\python.exe scripts/cleanup_local_artifacts.py --dry-run
+```
+
 ## Test coverage (CI)
 
 Pipeline CI uruchamia `pytest` z `pytest-cov` dla testow funkcjonalnych/jednostkowych oraz osobny krok dla testow architektury (`tests/architecture`, PyTestArch). Podsumowania sa publikowane w zakladce `Checks` (GitHub Step Summary).
