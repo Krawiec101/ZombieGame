@@ -10,14 +10,28 @@ venv/
 
 # Pytest cache
 .pytest_cache/
+.ruff_cache/
 .mutmut-cache
 mutants/
 
 # (opcjonalnie) mypy / coverage
 .mypy_cache/
 .coverage
+coverage.xml
 htmlcov/
 crap-summary.md
+mutmut-results.txt
+architecture-report.txt
+architecture-summary.md
+coverage-summary.md
+lint-report.txt
+lint-summary.md
+mutation-summary.md
+pytest-coverage.txt
+sca-report.txt
+sca-summary.md
 
 # Local temporary artifacts
+.codex-*/
 .tmp-*/
+pytest-temp-run-*/
