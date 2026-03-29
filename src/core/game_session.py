@@ -29,8 +29,8 @@ from core.mission_objectives import (
     MissionObjectivesEvaluator,
     create_default_mission_objectives_evaluator,
 )
+from core.scenario_config import load_default_scenario_config
 
-_MAP_WIDTH_KM = 20.0
 _SIMULATION_SECONDS_PER_TICK = 8.0
 _SUPPLY_INTERVAL_SECONDS = 45.0
 _SUPPLY_APPROACH_SECONDS = 6.0
@@ -46,34 +46,7 @@ _SUPPLY_CONVOY_UNIT_TYPE_ID = "mechanized_squad"
 _TRANSPORT_SPAWN_OFFSET_X = 96.0
 _TRANSPORT_SPAWN_OFFSET_Y = 120.0
 _ZOMBIE_GROUP_MARKER_SIZE_PX = 22
-_MAIN_ROAD_ID = "main_supply_road"
 _ROAD_SAMPLES_PER_SEGMENT = 14
-
-_MAP_OBJECT_LAYOUT = (
-    {
-        "id": "hq",
-        "anchor_x": 0.22,
-        "anchor_y": 0.58,
-        "width": 84,
-        "height": 56,
-        "storage_capacity": _BASE_SUPPLY_CAPACITY,
-    },
-    {
-        "id": "landing_pad",
-        "anchor_x": 0.78,
-        "anchor_y": 0.34,
-        "width": 72,
-        "height": 48,
-        "pad_size": "small",
-        "secured_by_objective_id": "landing_pad_cleared",
-    },
-)
-_RECON_SITE_LAYOUT = (
-    {"id": "recon_site_1", "anchor_x": 0.42, "anchor_y": 0.22, "width": 58, "height": 44},
-    {"id": "recon_site_2", "anchor_x": 0.56, "anchor_y": 0.20, "width": 58, "height": 44},
-    {"id": "recon_site_3", "anchor_x": 0.62, "anchor_y": 0.52, "width": 58, "height": 44},
-    {"id": "recon_site_4", "anchor_x": 0.34, "anchor_y": 0.76, "width": 58, "height": 44},
-)
 
 
 @dataclass(frozen=True)
@@ -104,7 +77,7 @@ class SupplyTransportTypeSpec:
 @dataclass(frozen=True)
 class CommanderState:
     name: str = ""
-    experience_level: str = "recruit"
+    experience_level: str = "basic"
 
 
 @dataclass
@@ -117,7 +90,7 @@ class UnitState:
     carried_resources: dict[str, int] = field(default_factory=dict)
     name: str = ""
     commander: CommanderState = field(default_factory=CommanderState)
-    experience_level: str = "recruit"
+    experience_level: str = "basic"
     personnel: int = 0
     morale: int = 0
     ammo: int = 0
@@ -219,56 +192,57 @@ class MainObjectiveReportRule:
     message_key: str
 
 
-REINFORCEMENT_TEMPLATES: tuple[ReinforcementTemplate, ...] = (
-    ReinforcementTemplate(
-        unit_id="charlie_infantry",
-        unit_type_id="infantry_squad",
-        name="3. Druzyna Charlie",
-        commander=CommanderState(name="ppor. Lena Brzeg", experience_level="regular"),
-        experience_level="regular",
-        personnel=9,
-        morale=68,
-        ammo=74,
-        rations=12,
-        fuel=0,
-    ),
-    ReinforcementTemplate(
-        unit_id="delta_infantry",
-        unit_type_id="infantry_squad",
-        name="4. Druzyna Delta",
-        commander=CommanderState(name="sier. Oskar Lis", experience_level="veteran"),
-        experience_level="regular",
-        personnel=8,
-        morale=71,
-        ammo=70,
-        rations=10,
-        fuel=0,
-    ),
-)
+_DEFAULT_SCENARIO = load_default_scenario_config()
+_MAP_WIDTH_KM = _DEFAULT_SCENARIO.map_width_km
+_MAP_OBJECT_LAYOUT = _DEFAULT_SCENARIO.map_objects
+_RECON_SITE_LAYOUT = _DEFAULT_SCENARIO.recon_sites
+_ROAD_LAYOUTS = _DEFAULT_SCENARIO.roads
+_INITIAL_UNIT_LAYOUT = _DEFAULT_SCENARIO.initial_units
+_INITIAL_ENEMY_GROUP_LAYOUT = _DEFAULT_SCENARIO.initial_enemy_groups
 
-MAIN_OBJECTIVE_REPORT_RULES: tuple[MainObjectiveReportRule, ...] = (
-    MainObjectiveReportRule(
-        goal_id="secure_landing_pad_and_route",
-        required_objective_ids=("landing_pad_cleared", "supply_route_to_hq"),
-        report_id="hq_report_secure_landing_pad_and_route",
-        title_key="mission.report.title",
-        message_key="mission.report.secure_landing_pad_and_route",
-    ),
-    MainObjectiveReportRule(
-        goal_id="find_first_missing_detachment",
-        required_objective_ids=("find_first_missing_detachment",),
-        report_id="hq_report_find_first_missing_detachment",
-        title_key="mission.report.title",
-        message_key="mission.report.find_first_missing_detachment",
-    ),
-    MainObjectiveReportRule(
-        goal_id="find_second_missing_detachment",
-        required_objective_ids=("find_second_missing_detachment",),
-        report_id="hq_report_find_second_missing_detachment",
-        title_key="mission.report.title",
-        message_key="mission.report.find_second_missing_detachment",
-    ),
-)
+
+def _commander_state_from_config(config: dict[str, Any]) -> CommanderState:
+    return CommanderState(
+        name=str(config.get("name", "")),
+        experience_level=str(config.get("experience_level", "basic")),
+    )
+
+
+def _reinforcement_templates_from_config() -> tuple[ReinforcementTemplate, ...]:
+    return tuple(
+        ReinforcementTemplate(
+            unit_id=str(template.get("unit_id", "")),
+            unit_type_id=str(template.get("unit_type_id", "")),
+            name=str(template.get("name", "")),
+            commander=_commander_state_from_config(dict(template.get("commander", {}))),
+            experience_level=str(template.get("experience_level", "basic")),
+            personnel=int(template.get("personnel", 0)),
+            morale=int(template.get("morale", 0)),
+            ammo=int(template.get("ammo", 0)),
+            rations=int(template.get("rations", 0)),
+            fuel=int(template.get("fuel", 0)),
+        )
+        for template in _DEFAULT_SCENARIO.reinforcements
+    )
+
+
+def _main_objective_report_rules_from_config() -> tuple[MainObjectiveReportRule, ...]:
+    return tuple(
+        MainObjectiveReportRule(
+            goal_id=str(report.get("goal_id", "")),
+            required_objective_ids=tuple(
+                str(objective_id) for objective_id in report.get("required_objective_ids", [])
+            ),
+            report_id=str(report.get("report_id", "")),
+            title_key=str(report.get("title_key", "")),
+            message_key=str(report.get("message_key", "")),
+        )
+        for report in _DEFAULT_SCENARIO.mission_reports
+    )
+
+
+REINFORCEMENT_TEMPLATES: tuple[ReinforcementTemplate, ...] = _reinforcement_templates_from_config()
+MAIN_OBJECTIVE_REPORT_RULES: tuple[MainObjectiveReportRule, ...] = _main_objective_report_rules_from_config()
 
 
 UNIT_TYPE_SPECS: dict[str, UnitTypeSpec] = {
@@ -794,21 +768,38 @@ class GameSession:
         return map_object
 
     def _build_roads(self) -> list[dict[str, Any]]:
-        hq_center = self._map_object_center("hq")  # pragma: no mutate
-        landing_pad_center = self._map_object_center("landing_pad")  # pragma: no mutate
-        if hq_center == (0.0, 0.0) or landing_pad_center == (0.0, 0.0):  # pragma: no mutate
-            return []  # pragma: no mutate
+        roads: list[dict[str, Any]] = []
+        for road_layout in _ROAD_LAYOUTS:
+            control_points: list[tuple[float, float]] = []
+            for control_point in road_layout.get("control_points", []):
+                resolved_point = self._resolve_road_control_point(dict(control_point))
+                if resolved_point is None:
+                    control_points = []
+                    break
+                control_points.append(resolved_point)
+            if len(control_points) < 2:
+                continue
+            roads.append(
+                {
+                    "id": str(road_layout.get("id", "")),
+                    "points": self._sample_road_curve(tuple(control_points)),
+                }
+            )
+        return roads
 
-        width, height = self._map_size  # pragma: no mutate
-        control_points = (  # pragma: no mutate
-            hq_center,  # pragma: no mutate
-            (width * 0.30, height * 0.66),  # pragma: no mutate
-            (width * 0.42, height * 0.74),  # pragma: no mutate
-            (width * 0.58, height * 0.63),  # pragma: no mutate
-            (width * 0.69, height * 0.50),  # pragma: no mutate
-            landing_pad_center,  # pragma: no mutate
+    def _resolve_road_control_point(self, control_point: dict[str, Any]) -> tuple[float, float] | None:
+        point_type = str(control_point.get("point_type", "relative_map_point"))
+        if point_type == "map_object_center":
+            object_id = str(control_point.get("object_id", ""))
+            if self._map_object_bounds(object_id) is None:
+                return None
+            return self._map_object_center(object_id)
+
+        width, height = self._map_size
+        return (
+            width * float(control_point.get("anchor_x", 0.0)),
+            height * float(control_point.get("anchor_y", 0.0)),
         )
-        return [{"id": _MAIN_ROAD_ID, "points": self._sample_road_curve(control_points)}]  # pragma: no mutate
 
     def _sample_road_curve(
         self,
@@ -937,56 +928,66 @@ class GameSession:
         self._landing_pads = synced_landing_pads
 
     def _initialize_units(self) -> None:
-        hq = next((obj for obj in self._map_objects if obj["id"] == "hq"), None)
-        landing_pad = next((obj for obj in self._map_objects if obj["id"] == "landing_pad"), None)
-        if hq is None:
+        if self._map_object_bounds("hq") is None:
+            self._units = []
+            self._enemy_groups = []
             return
 
-        hq_left, hq_top, hq_right, hq_bottom = hq["bounds"]
-        hq_center = ((hq_left + hq_right) / 2.0, (hq_top + hq_bottom) / 2.0)
-        self._units = [
-            UnitState(
-                unit_id="alpha_infantry",
-                unit_type_id="infantry_squad",
-                position=(hq_center[0] - 22.0, hq_center[1] + 8.0),
-                name="1. Druzyna Alfa",
-                commander=CommanderState(name="por. Anna Sowa", experience_level="regular"),
-                experience_level="recruit",
-                personnel=10,
-                morale=72,
-                ammo=90,
-                rations=18,
-                fuel=0,
-            ),
-            UnitState(
-                unit_id="bravo_mechanized",
-                unit_type_id="mechanized_squad",
-                position=self._road_anchor_for_point((hq_center[0] + 26.0, hq_center[1] + 8.0)),
-                name="2. Sekcja Bravo",
-                commander=CommanderState(name="kpt. Marek Wolny", experience_level="veteran"),
-                experience_level="regular",
-                personnel=8,
-                morale=81,
-                ammo=120,
-                rations=24,
-                fuel=65,
-            ),
-        ]
-        if landing_pad is not None:
-            pad_left, pad_top, pad_right, pad_bottom = landing_pad["bounds"]
-            pad_center = ((pad_left + pad_right) / 2.0, (pad_top + pad_bottom) / 2.0)
-            self._enemy_groups = [
+        self._units = []
+        for unit_layout in _INITIAL_UNIT_LAYOUT:
+            position = self._spawn_position_from_layout(unit_layout)
+            if position is None:
+                continue
+            if bool(unit_layout.get("snap_to_road", False)):
+                position = self._road_anchor_for_point(position)
+            commander_config = unit_layout.get("commander")
+            self._units.append(
+                UnitState(
+                    unit_id=str(unit_layout.get("unit_id", "")),
+                    unit_type_id=str(unit_layout.get("unit_type_id", "")),
+                    position=position,
+                    name=str(unit_layout.get("name", "")),
+                    commander=_commander_state_from_config(
+                        dict(commander_config) if isinstance(commander_config, dict) else {}
+                    ),
+                    experience_level=str(unit_layout.get("experience_level", "basic")),
+                    personnel=int(unit_layout.get("personnel", 0)),
+                    morale=int(unit_layout.get("morale", 0)),
+                    ammo=int(unit_layout.get("ammo", 0)),
+                    rations=int(unit_layout.get("rations", 0)),
+                    fuel=int(unit_layout.get("fuel", 0)),
+                )
+            )
+
+        self._enemy_groups = []
+        for group_layout in _INITIAL_ENEMY_GROUP_LAYOUT:
+            position = self._spawn_position_from_layout(group_layout)
+            if position is None:
+                continue
+            self._enemy_groups.append(
                 ZombieGroupState(
-                    group_id="zulu_zombies",
-                    position=pad_center,
-                    name="Mala grupa zombie",
-                    personnel=7,
-                ),
-            ]
+                    group_id=str(group_layout.get("group_id", "")),
+                    position=position,
+                    name=str(group_layout.get("name", "")),
+                    personnel=int(group_layout.get("personnel", 0)),
+                )
+            )
         for unit in self._units:
             unit.position = self._clamp_point_to_map(unit.position, unit_type_id=unit.unit_type_id)
         self._clamp_enemy_groups_to_map()
         self._units_initialized = True
+
+    def _spawn_position_from_layout(self, layout: dict[str, Any]) -> tuple[float, float] | None:
+        anchor_object_id = str(layout.get("anchor_object_id", ""))
+        if not anchor_object_id:
+            return None
+        if self._map_object_bounds(anchor_object_id) is None:
+            return None
+        anchor_x, anchor_y = self._map_object_center(anchor_object_id)
+        return (
+            anchor_x + float(layout.get("offset_x", 0.0)),
+            anchor_y + float(layout.get("offset_y", 0.0)),
+        )
 
     def _clamp_enemy_groups_to_map(self) -> None:
         for enemy_group in self._enemy_groups:

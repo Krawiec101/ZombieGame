@@ -22,6 +22,7 @@ sca-report.txt
 sca-summary.md
 pytest-cache-files-*
 pytest-temp-run-*
+tmp*
 tmps*
 __pycache__
 mutants

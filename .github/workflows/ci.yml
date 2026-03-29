@@ -16,12 +16,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Restore mutmut cache
-        uses: actions/cache@v5
-        with:
-          path: mutants
-          key: ${{ runner.os }}-mutmut-${{ hashFiles('pyproject.toml', 'pytest.ini', 'requirements.txt', 'docker/Dockerfile', 'src/**/*.py', 'tests/**/*.py') }}
-
       - name: Build Docker image(s)
         run: docker compose build
 
@@ -155,6 +149,7 @@ jobs:
 
       - name: Run mutation tests (mutmut)
         run: |
+          rm -rf mutants
           docker compose run --rm app mutmut run
           docker compose run --rm app sh -lc "mutmut results --all true" > mutmut-results.txt
           cat mutmut-results.txt
