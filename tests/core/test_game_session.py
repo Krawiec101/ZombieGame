@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 
 from contracts.game_state import (
     BaseSnapshot,
@@ -18,10 +19,15 @@ from contracts.game_state import (
     UnitSnapshot,
 )
 from core.game_session import (
+    MAIN_OBJECTIVE_REPORT_RULES,
+    REINFORCEMENT_TEMPLATES,
     SUPPLY_TRANSPORT_TYPE_SPECS,
     BaseState,
     CombatState,
     CombatNotificationState,
+    CommanderState,
+    MainObjectiveReportRule,
+    ReinforcementTemplate,
     SupplyTransportTypeSpec,
     UNIT_TYPE_SPECS,
     LandingPadState,
@@ -29,8 +35,12 @@ from core.game_session import (
     SupplyTransportState,
     UnitState,
     ZombieGroupState,
+    _commander_state_from_config,
+    _main_objective_report_rules_from_config,
+    _reinforcement_templates_from_config,
     create_default_game_session,
 )
+from core.scenario_config import ScenarioConfig
 
 
 def _unit_by_id(units: list[dict[str, object]], unit_id: str) -> dict[str, object]:
@@ -65,6 +75,34 @@ def _road_snapshot(session) -> RoadSnapshot:
     return session.roads_snapshot()[0]
 
 
+def _scenario_config_for_game_session_tests(
+    *,
+    reinforcements: Sequence[dict[str, object]] = (),
+    mission_reports: Sequence[dict[str, object]] = (),
+) -> ScenarioConfig:
+    return ScenarioConfig(
+        scenario_id="scenario",
+        campaign_id="campaign",
+        default_mission_id="mission_1",
+        mission_id="mission_1",
+        available_mission_ids=("mission_1",),
+        next_mission_id="",
+        default_stage_id="stage_1",
+        stage_id="stage_1",
+        available_stage_ids=("stage_1",),
+        map_width_km=20.0,
+        map_objects=(),
+        recon_sites=(),
+        roads=(),
+        initial_units=(),
+        initial_enemy_groups=(),
+        reinforcements=tuple(reinforcements),
+        mission_objectives=(),
+        mission_reports=tuple(mission_reports),
+        stage_events=(),
+    )
+
+
 def test_game_session_initializes_map_objects_and_units() -> None:
     session = create_default_game_session()
     session.update_map_dimensions(width=960, height=640)
@@ -83,6 +121,494 @@ def test_game_session_initializes_map_objects_and_units() -> None:
             personnel=7,
         ),
     )
+
+
+def test_commander_state_from_config_coerces_values_and_applies_basic_default() -> None:
+    assert _commander_state_from_config({"name": 17}) == CommanderState(
+        name="17",
+        experience_level="basic",
+    )
+    assert _commander_state_from_config({"name": "sier. Ada", "experience_level": 2}) == CommanderState(
+        name="sier. Ada",
+        experience_level="2",
+    )
+
+
+def test_commander_state_from_config_uses_empty_name_when_field_is_missing() -> None:
+    assert _commander_state_from_config({}) == CommanderState(
+        name="",
+        experience_level="basic",
+    )
+
+
+def test_reinforcement_templates_match_default_scenario_contract() -> None:
+    expected_templates = (
+        ReinforcementTemplate(
+            unit_id="charlie_infantry",
+            unit_type_id="infantry_squad",
+            name="3. Druzyna Charlie",
+            commander=CommanderState(name="sier. Lena Brzeg", experience_level="basic"),
+            experience_level="basic",
+            personnel=9,
+            morale=68,
+            ammo=74,
+            rations=12,
+            fuel=0,
+        ),
+        ReinforcementTemplate(
+            unit_id="delta_infantry",
+            unit_type_id="infantry_squad",
+            name="4. Druzyna Delta",
+            commander=CommanderState(name="sier. Oskar Lis", experience_level="basic"),
+            experience_level="basic",
+            personnel=8,
+            morale=71,
+            ammo=70,
+            rations=10,
+            fuel=0,
+        ),
+    )
+
+    assert REINFORCEMENT_TEMPLATES == expected_templates
+    assert _reinforcement_templates_from_config() == expected_templates
+
+
+def test_reinforcement_templates_from_config_applies_defaults_and_coercion(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.game_session._DEFAULT_SCENARIO",
+        _scenario_config_for_game_session_tests(
+            reinforcements=(
+                {
+                    "personnel": "9",
+                    "commander": {"name": 5},
+                },
+                {
+                    "unit_id": 17,
+                    "unit_type_id": 3,
+                    "name": 9,
+                    "commander": {"experience_level": 4},
+                    "experience_level": 2,
+                    "personnel": "11",
+                    "morale": "12",
+                    "ammo": "13",
+                    "rations": "14",
+                    "fuel": "15",
+                },
+            ),
+        ),
+    )
+
+    assert _reinforcement_templates_from_config() == (
+        ReinforcementTemplate(
+            unit_id="",
+            unit_type_id="",
+            name="",
+            commander=CommanderState(name="5", experience_level="basic"),
+            experience_level="basic",
+            personnel=9,
+            morale=0,
+            ammo=0,
+            rations=0,
+            fuel=0,
+        ),
+        ReinforcementTemplate(
+            unit_id="17",
+            unit_type_id="3",
+            name="9",
+            commander=CommanderState(name="", experience_level="4"),
+            experience_level="2",
+            personnel=11,
+            morale=12,
+            ammo=13,
+            rations=14,
+            fuel=15,
+        ),
+    )
+
+
+def test_main_objective_report_rules_match_default_scenario_contract() -> None:
+    expected_rules = (
+        MainObjectiveReportRule(
+            goal_id="secure_landing_pad_and_route",
+            required_objective_ids=("landing_pad_cleared", "supply_route_to_hq"),
+            report_id="hq_report_secure_landing_pad_and_route",
+            title_key="mission.report.title",
+            message_key="mission.report.secure_landing_pad_and_route",
+        ),
+        MainObjectiveReportRule(
+            goal_id="find_first_missing_detachment",
+            required_objective_ids=("find_first_missing_detachment",),
+            report_id="hq_report_find_first_missing_detachment",
+            title_key="mission.report.title",
+            message_key="mission.report.find_first_missing_detachment",
+        ),
+        MainObjectiveReportRule(
+            goal_id="find_second_missing_detachment",
+            required_objective_ids=("find_second_missing_detachment",),
+            report_id="hq_report_find_second_missing_detachment",
+            title_key="mission.report.title",
+            message_key="mission.report.find_second_missing_detachment",
+        ),
+    )
+
+    assert MAIN_OBJECTIVE_REPORT_RULES == expected_rules
+    assert _main_objective_report_rules_from_config() == expected_rules
+
+
+def test_main_objective_report_rules_from_config_applies_defaults_and_coercion(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.game_session._DEFAULT_SCENARIO",
+        _scenario_config_for_game_session_tests(
+            mission_reports=(
+                {},
+                {
+                    "goal_id": 12,
+                    "required_objective_ids": [1, "two"],
+                    "report_id": 13,
+                    "title_key": 14,
+                    "message_key": 15,
+                },
+            ),
+        ),
+    )
+
+    assert _main_objective_report_rules_from_config() == (
+        MainObjectiveReportRule(
+            goal_id="",
+            required_objective_ids=(),
+            report_id="",
+            title_key="",
+            message_key="",
+        ),
+        MainObjectiveReportRule(
+            goal_id="12",
+            required_objective_ids=("1", "two"),
+            report_id="13",
+            title_key="14",
+            message_key="15",
+        ),
+    )
+
+
+def test_create_default_game_session_preserves_injected_providers() -> None:
+    def clock() -> float:
+        return 123.0
+
+    def roll() -> float:
+        return 0.25
+
+    session = create_default_game_session(
+        time_provider=clock,
+        search_roll_provider=roll,
+    )
+
+    assert session._time_provider is clock
+    assert session._search_roll_provider is roll
+
+
+def test_build_roads_skips_invalid_layouts_and_resolves_control_points(monkeypatch) -> None:
+    session = create_default_game_session()
+    session._map_size = (1000, 500)
+    session._map_objects = [
+        {"id": "hq", "bounds": (100, 200, 140, 240)},
+    ]
+    monkeypatch.setattr(
+        "core.game_session._ROAD_LAYOUTS",
+        (
+            {
+                "id": 17,
+                "control_points": [
+                    {"point_type": "map_object_center", "object_id": "hq"},
+                    {"anchor_x": 0.5, "anchor_y": 0.25},
+                ],
+            },
+            {
+                "id": "missing_object",
+                "control_points": [
+                    {"point_type": "map_object_center", "object_id": "missing"},
+                    {"anchor_x": 1.0, "anchor_y": 1.0},
+                ],
+            },
+            {
+                "id": "too_short",
+                "control_points": [{"anchor_x": 0.1, "anchor_y": 0.2}],
+            },
+        ),
+    )
+
+    roads = session._build_roads()
+
+    assert [road["id"] for road in roads] == ["17"]
+    assert session._resolve_road_control_point({}) == (0.0, 0.0)
+    assert session._resolve_road_control_point(
+        {"point_type": "map_object_center", "object_id": "missing"}
+    ) is None
+    assert roads[0]["points"][0] == (120.0, 220.0)
+    assert roads[0]["points"][-1] == (500.0, 125.0)
+
+
+def test_spawn_position_from_layout_requires_anchor_and_applies_default_offsets() -> None:
+    session = create_default_game_session()
+    session._map_objects = [{"id": "hq", "bounds": (10, 20, 30, 40)}]
+
+    assert session._spawn_position_from_layout({}) is None
+    assert session._spawn_position_from_layout({"anchor_object_id": "missing"}) is None
+    assert session._spawn_position_from_layout({"anchor_object_id": "hq"}) == (20.0, 30.0)
+    assert session._spawn_position_from_layout(
+        {"anchor_object_id": "hq", "offset_x": 5, "offset_y": -3}
+    ) == (25.0, 27.0)
+
+
+def test_initialize_units_applies_defaults_coercion_and_skips_invalid_layouts(monkeypatch) -> None:
+    session = create_default_game_session()
+    session._map_size = (200, 200)
+    session._map_objects = [{"id": "hq", "bounds": (80, 80, 120, 120)}]
+    session._roads = [{"id": "road", "points": ((105.0, 106.0), (110.0, 111.0))}]
+    monkeypatch.setattr(
+        "core.game_session._INITIAL_UNIT_LAYOUT",
+        (
+            {
+                "anchor_object_id": "hq",
+                "offset_x": 4,
+                "offset_y": 5,
+                "snap_to_road": True,
+                "unit_type_id": "mechanized_squad",
+            },
+            {
+                "unit_id": 7,
+                "unit_type_id": "infantry_squad",
+                "anchor_object_id": "hq",
+                "offset_x": "-6",
+                "offset_y": "8",
+                "name": 9,
+                "commander": {"experience_level": 3},
+                "experience_level": 2,
+                "personnel": "11",
+                "morale": "12",
+                "ammo": "13",
+                "rations": "14",
+                "fuel": "15",
+            },
+            {
+                "unit_id": "ignored",
+                "unit_type_id": "infantry_squad",
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "core.game_session._INITIAL_ENEMY_GROUP_LAYOUT",
+        (
+            {
+                "anchor_object_id": "hq",
+                "offset_x": 1,
+                "offset_y": 2,
+            },
+            {
+                "group_id": 9,
+                "anchor_object_id": "hq",
+                "offset_x": "-1",
+                "offset_y": "-2",
+                "name": 8,
+                "personnel": "7",
+            },
+        ),
+    )
+
+    session._initialize_units()
+
+    assert session._units_initialized is True
+    assert session._units == [
+        UnitState(
+            unit_id="",
+            unit_type_id="mechanized_squad",
+            position=(105.0, 106.0),
+            name="",
+            commander=CommanderState(name="", experience_level="basic"),
+            experience_level="basic",
+            personnel=0,
+            morale=0,
+            ammo=0,
+            rations=0,
+            fuel=0,
+        ),
+        UnitState(
+            unit_id="7",
+            unit_type_id="infantry_squad",
+            position=(94.0, 108.0),
+            name="9",
+            commander=CommanderState(name="", experience_level="3"),
+            experience_level="2",
+            personnel=11,
+            morale=12,
+            ammo=13,
+            rations=14,
+            fuel=15,
+        ),
+    ]
+    assert session._enemy_groups == [
+        ZombieGroupState(group_id="", position=(101.0, 102.0), name="", personnel=0),
+        ZombieGroupState(group_id="9", position=(99.0, 98.0), name="8", personnel=7),
+    ]
+
+
+def test_should_reveal_reinforcement_covers_false_forced_and_probability_paths(monkeypatch) -> None:
+    session = create_default_game_session(search_roll_provider=lambda: 0.4)
+    monkeypatch.setattr(
+        "core.game_session._RECON_SITE_LAYOUT",
+        (
+            {"id": "site_1"},
+            {"id": "site_2"},
+            {"id": "site_3"},
+        ),
+    )
+    monkeypatch.setattr(
+        "core.game_session.REINFORCEMENT_TEMPLATES",
+        (
+            ReinforcementTemplate(
+                unit_id="r1",
+                unit_type_id="infantry_squad",
+                name="R1",
+                commander=CommanderState(),
+                experience_level="basic",
+                personnel=1,
+                morale=1,
+                ammo=1,
+                rations=1,
+                fuel=0,
+            ),
+            ReinforcementTemplate(
+                unit_id="r2",
+                unit_type_id="infantry_squad",
+                name="R2",
+                commander=CommanderState(),
+                experience_level="basic",
+                personnel=1,
+                morale=1,
+                ammo=1,
+                rations=1,
+                fuel=0,
+            ),
+        ),
+    )
+
+    session._found_reinforcement_unit_ids = {"r1", "r2"}
+    assert session._should_reveal_reinforcement() is False
+
+    session._found_reinforcement_unit_ids = set()
+    session._investigated_recon_site_ids = {"site_1", "site_2"}
+    assert session._should_reveal_reinforcement() is True
+
+    session._found_reinforcement_unit_ids = {"r1"}
+    session._investigated_recon_site_ids = set()
+    assert session._should_reveal_reinforcement() is False
+
+    session._search_roll_provider = lambda: 0.25
+    assert session._should_reveal_reinforcement() is True
+
+
+def test_spawn_next_reinforcement_copies_template_fields_and_marks_unit_found(monkeypatch) -> None:
+    session = create_default_game_session()
+    session._map_size = (200, 200)
+    session._map_objects = [{"id": "site", "bounds": (90, 90, 110, 110)}]
+    monkeypatch.setattr(
+        "core.game_session.REINFORCEMENT_TEMPLATES",
+        (
+            ReinforcementTemplate(
+                unit_id="first",
+                unit_type_id="infantry_squad",
+                name="First",
+                commander=CommanderState(name="A", experience_level="basic"),
+                experience_level="basic",
+                personnel=1,
+                morale=2,
+                ammo=3,
+                rations=4,
+                fuel=5,
+            ),
+            ReinforcementTemplate(
+                unit_id="second",
+                unit_type_id="mechanized_squad",
+                name="Second",
+                commander=CommanderState(name="B", experience_level="elite"),
+                experience_level="elite",
+                personnel=6,
+                morale=7,
+                ammo=8,
+                rations=9,
+                fuel=10,
+            ),
+        ),
+    )
+    session._found_reinforcement_unit_ids = {"first"}
+
+    session._spawn_next_reinforcement("site")
+    session._spawn_next_reinforcement("site")
+
+    assert session._found_reinforcement_unit_ids == {"first", "second"}
+    assert session._units == [
+        UnitState(
+            unit_id="second",
+            unit_type_id="mechanized_squad",
+            position=(100.0, 100.0),
+            name="Second",
+            commander=CommanderState(name="B", experience_level="elite"),
+            experience_level="elite",
+            personnel=6,
+            morale=7,
+            ammo=8,
+            rations=9,
+            fuel=10,
+        )
+    ]
+
+
+def test_map_object_bounds_and_point_in_bounds_handle_invalid_shapes_and_edges() -> None:
+    session = create_default_game_session()
+    session._map_objects = [
+        {"id": "good", "bounds": (1, 2, 3, 4)},
+        {"id": "bad_type", "bounds": [1, 2, 3, 4]},
+        {"id": "bad_len", "bounds": (1, 2, 3)},
+    ]
+
+    assert session._map_object_bounds("good") == (1, 2, 3, 4)
+    assert session._map_object_bounds("bad_type") is None
+    assert session._map_object_bounds("bad_len") is None
+    assert session._map_object_bounds("missing") is None
+    assert session._point_in_bounds((1, 2), (1, 2, 3, 4)) is True
+    assert session._point_in_bounds((3, 4), (1, 2, 3, 4)) is True
+    assert session._point_in_bounds((0, 2), (1, 2, 3, 4)) is False
+    assert session._point_in_bounds((1, 5), (1, 2, 3, 4)) is False
+
+
+def test_update_main_objective_reports_adds_matching_report_only_once(monkeypatch) -> None:
+    session = create_default_game_session()
+    monkeypatch.setattr(
+        "core.game_session.MAIN_OBJECTIVE_REPORT_RULES",
+        (
+            MainObjectiveReportRule(
+                goal_id="goal",
+                required_objective_ids=("a", "b"),
+                report_id="report",
+                title_key="title",
+                message_key="message",
+            ),
+        ),
+    )
+    session._objective_status = {"a": True, "b": False}
+
+    session._update_main_objective_reports()
+    session._objective_status["b"] = True
+    session._update_main_objective_reports()
+    session._update_main_objective_reports()
+
+    assert session._completed_main_objective_ids == {"goal"}
+    assert session._mission_reports == [
+        MissionReportSnapshot(
+            report_id="report",
+            title_key="title",
+            message_key="message",
+        )
+    ]
 
 
 def test_snapshot_exposes_typed_contract_for_ui_sync() -> None:
@@ -225,10 +751,10 @@ def test_snapshot_includes_selected_unit_and_pending_target() -> None:
     assert alpha.target == (840.0, 500.0)
     assert alpha.name == "1. Druzyna Alfa"
     assert alpha.commander == alpha.commander.__class__(
-        name="por. Anna Sowa",
-        experience_level="regular",
+        name="sier. Anna Sowa",
+        experience_level="basic",
     )
-    assert alpha.experience_level == "recruit"
+    assert alpha.experience_level == "basic"
     assert alpha.personnel == 10
     assert alpha.armament_key == "game.unit.armament.rifles_lmg"
     assert alpha.attack == 4
@@ -852,10 +1378,10 @@ def test_units_snapshot_contains_expected_keys_marker_sizes_and_targets() -> Non
     assert updated_infantry["target"] == (840.0, 500.0)
     assert updated_infantry["name"] == "1. Druzyna Alfa"
     assert updated_infantry["commander"] == {
-        "name": "por. Anna Sowa",
-        "experience_level": "regular",
+        "name": "sier. Anna Sowa",
+        "experience_level": "basic",
     }
-    assert updated_infantry["experience_level"] == "recruit"
+    assert updated_infantry["experience_level"] == "basic"
     assert updated_infantry["personnel"] == 10
     assert updated_infantry["armament_key"] == "game.unit.armament.rifles_lmg"
     assert updated_infantry["attack"] == 4
@@ -874,10 +1400,10 @@ def test_units_snapshot_contains_expected_keys_marker_sizes_and_targets() -> Non
     updated_motorized = _unit_by_id(units, "bravo_mechanized")
     assert updated_motorized["name"] == "2. Sekcja Bravo"
     assert updated_motorized["commander"] == {
-        "name": "kpt. Marek Wolny",
-        "experience_level": "veteran",
+        "name": "sier. Marek Wolny",
+        "experience_level": "basic",
     }
-    assert updated_motorized["experience_level"] == "regular"
+    assert updated_motorized["experience_level"] == "basic"
     assert updated_motorized["personnel"] == 8
     assert updated_motorized["armament_key"] == "game.unit.armament.apc_autocannon"
     assert updated_motorized["attack"] == 7

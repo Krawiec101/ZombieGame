@@ -15,7 +15,7 @@ class MapObjectSnapshot:
 @dataclass(frozen=True)
 class UnitCommanderSnapshot:
     name: str = ""
-    experience_level: str = "recruit"
+    experience_level: str = "basic"
 
 
 @dataclass(frozen=True)
@@ -43,7 +43,7 @@ class UnitSnapshot:
     marker_size_px: int
     name: str = ""
     commander: UnitCommanderSnapshot = field(default_factory=UnitCommanderSnapshot)
-    experience_level: str = "recruit"
+    experience_level: str = "basic"
     personnel: int = 0
     armament_key: str = ""
     attack: int = 0

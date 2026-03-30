@@ -15,6 +15,9 @@ Komunikacja miedzy warstwami odbywa sie przez zdarzenia:
 
 `pygame` jest importowany lazy w warstwie UI (dopiero przy tworzeniu widoku pygame), co pozwala uruchamiac testy w srodowiskach headless.
 
+Domyslny scenariusz misji jest ladowany z pliku `src/core/scenarios/default_scenario.json`.
+To tam znajduja sie zalozenia mapy oraz struktura kampanii: kolejne misje, ich etapy, stan poczatkowy, cele, raporty fabularne i miejsce na przyszle wydarzenia.
+
 ## Uruchomienie gry
 
 Preferowany sposob uruchamiania z root repo:
@@ -106,9 +109,13 @@ Progi startowe w CI:
 Projekt korzysta z `mutmut`:
 
 ```bash
+python scripts/cleanup_local_artifacts.py
 python -m mutmut run
 python -m mutmut results --all true
 ```
+
+Wazne: `mutmut` przechowuje wyniki w katalogu `mutants`, wiec do wiernego odtworzenia CI trzeba zaczynac od czystego stanu.
+Bez usuniecia tego katalogu lokalny wynik moze byc tylko przyrostowy i nie pokaze rzeczywistej pelnej bramki mutacyjnej.
 
 W CI jest ustawiona bramka jakosci mutacji:
 - wymagany `mutation score`: `> 92%`

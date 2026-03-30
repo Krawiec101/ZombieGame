@@ -1,0 +1,335 @@
+{
+  "scenario": {
+    "scenario_id": "default_operation"
+  },
+  "campaign": {
+    "campaign_id": "northern_recovery"
+  },
+  "default_mission_id": "mission_1_secure_landing_zone",
+  "map": {
+    "width_km": 20.0,
+    "objects": [
+      {
+        "id": "hq",
+        "anchor_x": 0.22,
+        "anchor_y": 0.58,
+        "width": 84,
+        "height": 56,
+        "storage_capacity": 120
+      },
+      {
+        "id": "landing_pad",
+        "anchor_x": 0.78,
+        "anchor_y": 0.34,
+        "width": 72,
+        "height": 48,
+        "pad_size": "small",
+        "secured_by_objective_id": "landing_pad_cleared"
+      }
+    ],
+    "recon_sites": [
+      {
+        "id": "recon_site_1",
+        "anchor_x": 0.42,
+        "anchor_y": 0.22,
+        "width": 58,
+        "height": 44
+      },
+      {
+        "id": "recon_site_2",
+        "anchor_x": 0.56,
+        "anchor_y": 0.2,
+        "width": 58,
+        "height": 44
+      },
+      {
+        "id": "recon_site_3",
+        "anchor_x": 0.62,
+        "anchor_y": 0.52,
+        "width": 58,
+        "height": 44
+      },
+      {
+        "id": "recon_site_4",
+        "anchor_x": 0.34,
+        "anchor_y": 0.76,
+        "width": 58,
+        "height": 44
+      }
+    ],
+    "roads": [
+      {
+        "id": "main_supply_road",
+        "control_points": [
+          {
+            "point_type": "map_object_center",
+            "object_id": "hq"
+          },
+          {
+            "point_type": "relative_map_point",
+            "anchor_x": 0.3,
+            "anchor_y": 0.66
+          },
+          {
+            "point_type": "relative_map_point",
+            "anchor_x": 0.42,
+            "anchor_y": 0.74
+          },
+          {
+            "point_type": "relative_map_point",
+            "anchor_x": 0.58,
+            "anchor_y": 0.63
+          },
+          {
+            "point_type": "relative_map_point",
+            "anchor_x": 0.69,
+            "anchor_y": 0.5
+          },
+          {
+            "point_type": "map_object_center",
+            "object_id": "landing_pad"
+          }
+        ]
+      }
+    ]
+  },
+  "missions": [
+    {
+      "mission_id": "mission_1_secure_landing_zone",
+      "default_stage_id": "stage_1",
+      "next_mission_id": "mission_2_reach_relay",
+      "stages": [
+        {
+          "stage_id": "stage_1",
+          "events": [],
+          "mission": {
+            "objectives": [
+              {
+                "objective_id": "landing_pad_cleared",
+                "description_key": "mission.objective.landing_pad_cleared",
+                "target_object_id": "landing_pad",
+                "objective_type": "enemy_absent_from_object"
+              },
+              {
+                "objective_id": "supply_route_to_hq",
+                "description_key": "mission.objective.supply_route_to_hq",
+                "objective_type": "supply_route_established",
+                "source_object_id": "landing_pad",
+                "destination_object_id": "hq"
+              },
+              {
+                "objective_id": "find_first_missing_detachment",
+                "description_key": "mission.objective.find_first_missing_detachment",
+                "objective_type": "reinforcements_found",
+                "required_reinforcements_found": 1
+              },
+              {
+                "objective_id": "find_second_missing_detachment",
+                "description_key": "mission.objective.find_second_missing_detachment",
+                "objective_type": "reinforcements_found",
+                "required_reinforcements_found": 2
+              }
+            ],
+            "reports": [
+              {
+                "goal_id": "secure_landing_pad_and_route",
+                "required_objective_ids": [
+                  "landing_pad_cleared",
+                  "supply_route_to_hq"
+                ],
+                "report_id": "hq_report_secure_landing_pad_and_route",
+                "title_key": "mission.report.title",
+                "message_key": "mission.report.secure_landing_pad_and_route"
+              },
+              {
+                "goal_id": "find_first_missing_detachment",
+                "required_objective_ids": [
+                  "find_first_missing_detachment"
+                ],
+                "report_id": "hq_report_find_first_missing_detachment",
+                "title_key": "mission.report.title",
+                "message_key": "mission.report.find_first_missing_detachment"
+              },
+              {
+                "goal_id": "find_second_missing_detachment",
+                "required_objective_ids": [
+                  "find_second_missing_detachment"
+                ],
+                "report_id": "hq_report_find_second_missing_detachment",
+                "title_key": "mission.report.title",
+                "message_key": "mission.report.find_second_missing_detachment"
+              }
+            ]
+          },
+          "initial_state": {
+            "units": [
+              {
+                "unit_id": "alpha_infantry",
+                "unit_type_id": "infantry_squad",
+                "anchor_object_id": "hq",
+                "offset_x": -22.0,
+                "offset_y": 8.0,
+                "name": "1. Druzyna Alfa",
+                "commander": {
+                  "name": "sier. Anna Sowa",
+                  "experience_level": "basic"
+                },
+                "experience_level": "basic",
+                "personnel": 10,
+                "morale": 72,
+                "ammo": 90,
+                "rations": 18,
+                "fuel": 0
+              },
+              {
+                "unit_id": "bravo_mechanized",
+                "unit_type_id": "mechanized_squad",
+                "anchor_object_id": "hq",
+                "offset_x": 26.0,
+                "offset_y": 8.0,
+                "snap_to_road": true,
+                "name": "2. Sekcja Bravo",
+                "commander": {
+                  "name": "sier. Marek Wolny",
+                  "experience_level": "basic"
+                },
+                "experience_level": "basic",
+                "personnel": 8,
+                "morale": 81,
+                "ammo": 120,
+                "rations": 24,
+                "fuel": 65
+              }
+            ],
+            "enemy_groups": [
+              {
+                "group_id": "zulu_zombies",
+                "anchor_object_id": "landing_pad",
+                "name": "Mala grupa zombie",
+                "personnel": 7
+              }
+            ],
+            "reinforcements": [
+              {
+                "unit_id": "charlie_infantry",
+                "unit_type_id": "infantry_squad",
+                "name": "3. Druzyna Charlie",
+                "commander": {
+                  "name": "sier. Lena Brzeg",
+                  "experience_level": "basic"
+                },
+                "experience_level": "basic",
+                "personnel": 9,
+                "morale": 68,
+                "ammo": 74,
+                "rations": 12,
+                "fuel": 0
+              },
+              {
+                "unit_id": "delta_infantry",
+                "unit_type_id": "infantry_squad",
+                "name": "4. Druzyna Delta",
+                "commander": {
+                  "name": "sier. Oskar Lis",
+                  "experience_level": "basic"
+                },
+                "experience_level": "basic",
+                "personnel": 8,
+                "morale": 71,
+                "ammo": 70,
+                "rations": 10,
+                "fuel": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "mission_id": "mission_2_reach_relay",
+      "default_stage_id": "stage_1",
+      "next_mission_id": "",
+      "stages": [
+        {
+          "stage_id": "stage_1",
+          "events": [
+            {
+              "event_id": "relay_distress_call",
+              "trigger": {
+                "type": "mission_started"
+              },
+              "effects": [
+                {
+                  "type": "hq_report",
+                  "report_id": "hq_report_relay_distress_call"
+                }
+              ]
+            }
+          ],
+          "mission": {
+            "objectives": [
+              {
+                "objective_id": "landing_pad_cleared",
+                "description_key": "mission.objective.landing_pad_cleared",
+                "target_object_id": "landing_pad",
+                "objective_type": "enemy_absent_from_object"
+              },
+              {
+                "objective_id": "supply_route_to_hq",
+                "description_key": "mission.objective.supply_route_to_hq",
+                "objective_type": "supply_route_established",
+                "source_object_id": "landing_pad",
+                "destination_object_id": "hq"
+              }
+            ],
+            "reports": [
+              {
+                "goal_id": "secure_landing_pad_and_route",
+                "required_objective_ids": [
+                  "landing_pad_cleared",
+                  "supply_route_to_hq"
+                ],
+                "report_id": "hq_report_secure_landing_pad_and_route",
+                "title_key": "mission.report.title",
+                "message_key": "mission.report.secure_landing_pad_and_route"
+              }
+            ]
+          },
+          "initial_state": {
+            "units": [
+              {
+                "unit_id": "alpha_infantry",
+                "unit_type_id": "infantry_squad",
+                "anchor_object_id": "hq",
+                "offset_x": -12.0,
+                "offset_y": 8.0,
+                "name": "1. Druzyna Alfa",
+                "commander": {
+                  "name": "sier. Anna Sowa",
+                  "experience_level": "basic"
+                },
+                "experience_level": "basic",
+                "personnel": 9,
+                "morale": 70,
+                "ammo": 78,
+                "rations": 14,
+                "fuel": 0
+              }
+            ],
+            "enemy_groups": [
+              {
+                "group_id": "relay_outskirts_zombies",
+                "anchor_object_id": "landing_pad",
+                "offset_x": -34.0,
+                "offset_y": 18.0,
+                "name": "Mala grupa zombie",
+                "personnel": 9
+              }
+            ],
+            "reinforcements": []
+          }
+        }
+      ]
+    }
+  ]
+}

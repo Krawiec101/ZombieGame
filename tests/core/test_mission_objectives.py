@@ -3,8 +3,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from core.mission_objectives import (
+    DEFAULT_MISSION_OBJECTIVE_RULES,
     MissionObjectiveRule,
     MissionObjectivesEvaluator,
+    _load_default_mission_objective_rules,
     create_default_mission_objectives_evaluator,
 )
 
@@ -20,6 +22,54 @@ def test_default_evaluator_marks_landing_pad_cleared_when_no_zombies_remain_on_p
     )
 
     assert statuses["landing_pad_cleared"] is True
+
+
+def test_default_mission_objective_rules_match_scenario_configuration_contract() -> None:
+    expected_rules = (
+        MissionObjectiveRule(
+            objective_id="landing_pad_cleared",
+            description_key="mission.objective.landing_pad_cleared",
+            required_unit_type_id="",
+            target_object_id="landing_pad",
+            objective_type="enemy_absent_from_object",
+            source_object_id="",
+            destination_object_id="",
+            required_reinforcements_found=0,
+        ),
+        MissionObjectiveRule(
+            objective_id="supply_route_to_hq",
+            description_key="mission.objective.supply_route_to_hq",
+            required_unit_type_id="",
+            target_object_id="",
+            objective_type="supply_route_established",
+            source_object_id="landing_pad",
+            destination_object_id="hq",
+            required_reinforcements_found=0,
+        ),
+        MissionObjectiveRule(
+            objective_id="find_first_missing_detachment",
+            description_key="mission.objective.find_first_missing_detachment",
+            required_unit_type_id="",
+            target_object_id="",
+            objective_type="reinforcements_found",
+            source_object_id="",
+            destination_object_id="",
+            required_reinforcements_found=1,
+        ),
+        MissionObjectiveRule(
+            objective_id="find_second_missing_detachment",
+            description_key="mission.objective.find_second_missing_detachment",
+            required_unit_type_id="",
+            target_object_id="",
+            objective_type="reinforcements_found",
+            source_object_id="",
+            destination_object_id="",
+            required_reinforcements_found=2,
+        ),
+    )
+
+    assert DEFAULT_MISSION_OBJECTIVE_RULES == expected_rules
+    assert _load_default_mission_objective_rules() == expected_rules
 
 
 def test_default_evaluator_keeps_landing_pad_uncleared_when_zombies_are_on_pad() -> None:

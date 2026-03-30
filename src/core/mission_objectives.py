@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
+from core.scenario_config import load_default_scenario_config
+
 
 @dataclass(frozen=True)
 class MissionObjectiveRule:
@@ -16,33 +18,24 @@ class MissionObjectiveRule:
     required_reinforcements_found: int = 0
 
 
-DEFAULT_MISSION_OBJECTIVE_RULES: tuple[MissionObjectiveRule, ...] = (
-    MissionObjectiveRule(
-        objective_id="landing_pad_cleared",
-        description_key="mission.objective.landing_pad_cleared",
-        target_object_id="landing_pad",
-        objective_type="enemy_absent_from_object",
-    ),
-    MissionObjectiveRule(
-        objective_id="supply_route_to_hq",
-        description_key="mission.objective.supply_route_to_hq",
-        objective_type="supply_route_established",
-        source_object_id="landing_pad",
-        destination_object_id="hq",
-    ),
-    MissionObjectiveRule(
-        objective_id="find_first_missing_detachment",
-        description_key="mission.objective.find_first_missing_detachment",
-        objective_type="reinforcements_found",
-        required_reinforcements_found=1,
-    ),
-    MissionObjectiveRule(
-        objective_id="find_second_missing_detachment",
-        description_key="mission.objective.find_second_missing_detachment",
-        objective_type="reinforcements_found",
-        required_reinforcements_found=2,
-    ),
-)
+def _load_default_mission_objective_rules() -> tuple[MissionObjectiveRule, ...]:
+    scenario = load_default_scenario_config()
+    return tuple(
+        MissionObjectiveRule(
+            objective_id=str(rule.get("objective_id", "")),
+            description_key=str(rule.get("description_key", "")),
+            required_unit_type_id=str(rule.get("required_unit_type_id", "")),
+            target_object_id=str(rule.get("target_object_id", "")),
+            objective_type=str(rule.get("objective_type", "unit_on_object")),
+            source_object_id=str(rule.get("source_object_id", "")),
+            destination_object_id=str(rule.get("destination_object_id", "")),
+            required_reinforcements_found=int(rule.get("required_reinforcements_found", 0)),
+        )
+        for rule in scenario.mission_objectives
+    )
+
+
+DEFAULT_MISSION_OBJECTIVE_RULES: tuple[MissionObjectiveRule, ...] = _load_default_mission_objective_rules()
 
 
 class MissionObjectivesEvaluator:

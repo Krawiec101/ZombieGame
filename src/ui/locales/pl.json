@@ -41,6 +41,7 @@
   "game.enemy_group.type.zombies": "Mala grupa zombie",
   "game.hint.running": "Jestes juz w grze. ESC otwiera menu kontekstowe.",
   "game.mode.title": "TRYB GRY",
+  "game.experience.basic": "Podstawowy",
   "game.experience.recruit": "Rekrut",
   "game.experience.regular": "Regularny",
   "game.experience.veteran": "Weteran",
