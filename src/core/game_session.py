@@ -4,7 +4,7 @@ import math
 import random
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from contracts.game_state import (
@@ -25,6 +25,23 @@ from contracts.game_state import (
     UnitSnapshot,
     ZombieGroupSnapshot,
 )
+from core.model.buildings import (
+    BaseState,
+    LandingPadState,
+    LandingPadTypeSpec,
+    SUPPLY_RESOURCE_ORDER,
+    SupplyRouteState,
+    SupplyTransportState,
+    SupplyTransportTypeSpec,
+    empty_resource_store,
+    interpolate_points,
+)
+from core.model.units import (
+    CommanderState,
+    ReinforcementTemplate,
+    UnitState,
+    UnitTypeSpec,
+)
 from core.mission_objectives import (
     MissionObjectivesEvaluator,
     create_default_mission_objectives_evaluator,
@@ -40,106 +57,13 @@ _COMBAT_MIN_DURATION_SECONDS = 24.0
 _COMBAT_MAX_DURATION_SECONDS = 60.0
 _COMBAT_EXCHANGE_INTERVAL_SECONDS = 6.0
 _COMBAT_NOTIFICATION_DURATION_SECONDS = 12.0
-_SUPPLY_RESOURCE_ORDER = ("fuel", "mre", "ammo")
+_SUPPLY_RESOURCE_ORDER = SUPPLY_RESOURCE_ORDER
 _BASE_SUPPLY_CAPACITY = 120
 _SUPPLY_CONVOY_UNIT_TYPE_ID = "mechanized_squad"
 _TRANSPORT_SPAWN_OFFSET_X = 96.0
 _TRANSPORT_SPAWN_OFFSET_Y = 120.0
 _ZOMBIE_GROUP_MARKER_SIZE_PX = 22
 _ROAD_SAMPLES_PER_SEGMENT = 14
-
-
-@dataclass(frozen=True)
-class UnitTypeSpec:
-    type_id: str
-    speed_kmph: float
-    marker_size_px: int
-    armament_key: str = ""
-    attack: int = 0
-    defense: int = 0
-    can_transport_supplies: bool = False
-    supply_capacity: int = 0
-
-
-@dataclass(frozen=True)
-class LandingPadTypeSpec:
-    size_id: str
-    capacity: int
-    transport_type_id: str
-
-
-@dataclass(frozen=True)
-class SupplyTransportTypeSpec:
-    type_id: str
-    cargo: dict[str, int]
-
-
-@dataclass(frozen=True)
-class CommanderState:
-    name: str = ""
-    experience_level: str = "basic"
-
-
-@dataclass
-class UnitState:
-    unit_id: str
-    unit_type_id: str
-    position: tuple[float, float]
-    target: tuple[float, float] | None = None
-    path: tuple[tuple[float, float], ...] = ()
-    carried_resources: dict[str, int] = field(default_factory=dict)
-    name: str = ""
-    commander: CommanderState = field(default_factory=CommanderState)
-    experience_level: str = "basic"
-    personnel: int = 0
-    morale: int = 0
-    ammo: int = 0
-    rations: int = 0
-    fuel: int = 0
-
-
-@dataclass
-class SupplyTransportState:
-    transport_id: str
-    transport_type_id: str
-    target_object_id: str
-    phase: str
-    position: tuple[float, float]
-    seconds_remaining: float
-    total_phase_seconds: float
-    origin_position: tuple[float, float]
-    destination_position: tuple[float, float]
-
-
-@dataclass
-class LandingPadState:
-    object_id: str
-    pad_size: str
-    capacity: int
-    secured_by_objective_id: str
-    resources: dict[str, int] = field(
-        default_factory=lambda: {resource_id: 0 for resource_id in _SUPPLY_RESOURCE_ORDER}
-    )
-    next_transport_eta_seconds: float | None = None
-    active_transport: SupplyTransportState | None = None
-
-
-@dataclass
-class BaseState:
-    object_id: str
-    capacity: int
-    resources: dict[str, int] = field(
-        default_factory=lambda: {resource_id: 0 for resource_id in _SUPPLY_RESOURCE_ORDER}
-    )
-
-
-@dataclass
-class SupplyRouteState:
-    route_id: str
-    unit_id: str
-    source_object_id: str
-    destination_object_id: str
-    phase: str
 
 
 @dataclass
@@ -167,20 +91,6 @@ class CombatNotificationState:
     enemy_group_name: str
     phase: str
     seconds_remaining: float
-
-
-@dataclass(frozen=True)
-class ReinforcementTemplate:
-    unit_id: str
-    unit_type_id: str
-    name: str
-    commander: CommanderState
-    experience_level: str
-    personnel: int
-    morale: int
-    ammo: int
-    rations: int
-    fuel: int
 
 
 @dataclass(frozen=True)
@@ -445,9 +355,8 @@ class GameSession:
             return
 
         self._clear_supply_route_for_unit(selected_unit.unit_id)
-        selected_unit.target = None  # pragma: no mutate
-        selected_unit.path = ()  # pragma: no mutate
-        selected_unit.carried_resources = self._empty_resource_store()
+        selected_unit.clear_movement()
+        selected_unit.clear_carried_resources(resource_order=_SUPPLY_RESOURCE_ORDER)
         route = SupplyRouteState(
             route_id=f"{selected_unit.unit_id}:{source_object_id}->{destination_object_id}",
             unit_id=selected_unit.unit_id,
@@ -505,7 +414,7 @@ class GameSession:
                 "fuel": unit.fuel,
                 "can_transport_supplies": UNIT_TYPE_SPECS[unit.unit_type_id].can_transport_supplies,
                 "supply_capacity": UNIT_TYPE_SPECS[unit.unit_type_id].supply_capacity,
-                "carried_supply_total": self._resource_total(unit.carried_resources),
+                "carried_supply_total": unit.carried_supply_total(resource_order=_SUPPLY_RESOURCE_ORDER),
                 "active_supply_route_id": self._supply_route_id_for_unit(unit.unit_id),  # pragma: no mutate
                 "is_in_combat": self._combat_for_unit(unit.unit_id) is not None,
                 "combat_seconds_remaining": self._display_seconds(
@@ -523,7 +432,7 @@ class GameSession:
                 BaseSnapshot(  # pragma: no mutate
                     object_id=base.object_id,  # pragma: no mutate
                     capacity=base.capacity,  # pragma: no mutate
-                    total_stored=self._resource_total(base.resources),  # pragma: no mutate
+                    total_stored=base.total_stored(resource_order=_SUPPLY_RESOURCE_ORDER),  # pragma: no mutate
                     resources=tuple(  # pragma: no mutate
                         LandingPadResourceSnapshot(
                             resource_id=resource_id,  # pragma: no mutate
@@ -589,9 +498,9 @@ class GameSession:
                 LandingPadSnapshot(  # pragma: no mutate
                     object_id=landing_pad.object_id,  # pragma: no mutate
                     pad_size=landing_pad.pad_size,  # pragma: no mutate
-                    is_secured=self._is_landing_pad_secured(landing_pad),  # pragma: no mutate
+                    is_secured=landing_pad.is_secured(self._objective_status),  # pragma: no mutate
                     capacity=landing_pad.capacity,  # pragma: no mutate
-                    total_stored=self._landing_pad_total_stored(landing_pad),  # pragma: no mutate
+                    total_stored=landing_pad.total_stored(resource_order=_SUPPLY_RESOURCE_ORDER),  # pragma: no mutate
                     next_transport_seconds=self._display_seconds(  # pragma: no mutate
                         landing_pad.next_transport_eta_seconds
                     ),
@@ -648,7 +557,7 @@ class GameSession:
                     source_object_id=route.source_object_id,  # pragma: no mutate
                     destination_object_id=route.destination_object_id,  # pragma: no mutate
                     phase=route.phase,  # pragma: no mutate
-                    carried_total=self._resource_total(unit.carried_resources),  # pragma: no mutate
+                    carried_total=unit.carried_supply_total(resource_order=_SUPPLY_RESOURCE_ORDER),  # pragma: no mutate
                     capacity=UNIT_TYPE_SPECS[unit.unit_type_id].supply_capacity,  # pragma: no mutate
                 )
             )
@@ -1177,28 +1086,13 @@ class GameSession:
                 continue
 
             speed_px_per_tick = self._movement_pixels_per_tick(unit.unit_type_id)
-            if speed_px_per_tick <= 0:
-                continue
-
-            current_x, current_y = unit.position
-            next_waypoint = unit.path[0] if unit.path else unit.target
-            target_x, target_y = next_waypoint
-            delta_x = target_x - current_x
-            delta_y = target_y - current_y
-            distance = math.hypot(delta_x, delta_y)
-
-            if distance <= speed_px_per_tick:
-                unit.position = next_waypoint
-                if unit.path:
-                    unit.path = unit.path[1:]
-                if not unit.path:
-                    unit.target = None
-                continue
-
-            step = speed_px_per_tick / distance
-            moved_x = current_x + delta_x * step
-            moved_y = current_y + delta_y * step
-            unit.position = self._clamp_point_to_map((moved_x, moved_y), unit_type_id=unit.unit_type_id)
+            unit.advance_towards_target(
+                speed_px_per_tick=speed_px_per_tick,
+                clamp_position=lambda position, active_unit=unit: self._clamp_point_to_map(
+                    position,
+                    unit_type_id=active_unit.unit_type_id,
+                ),
+            )
 
     def _start_combat(self, unit: UnitState, enemy_group: ZombieGroupState) -> None:
         duration_seconds = self._combat_duration_seconds(unit, enemy_group)
@@ -1280,19 +1174,16 @@ class GameSession:
         road_mode: str,
     ) -> None:
         final_target = self._clamp_point_to_map(destination, unit_type_id=unit.unit_type_id)
-        if self._positions_match(unit.position, final_target):
-            unit.position = final_target
-            unit.target = None
-            unit.path = ()
-            return
-
         path = self._plan_unit_path(
             unit.position,
             final_target,
             road_mode=road_mode,
         )
-        unit.target = final_target
-        unit.path = tuple(path) if path else (final_target,)
+        unit.set_movement_target(
+            final_target,
+            path=path,
+            positions_match=self._positions_match,
+        )
 
     def _plan_unit_path(
         self,
@@ -1386,138 +1277,45 @@ class GameSession:
         landing_pad: LandingPadState,
         elapsed_seconds: float,
     ) -> None:
-        if not self._is_landing_pad_secured(landing_pad):
-            landing_pad.next_transport_eta_seconds = None
-            landing_pad.active_transport = None
-            return
-
-        remaining_elapsed = max(0.0, elapsed_seconds)
-        while True:
-            if landing_pad.active_transport is not None:
-                if remaining_elapsed <= 0.0:
-                    self._refresh_transport_geometry(landing_pad)
-                    return
-
-                active_transport = landing_pad.active_transport
-                assert active_transport is not None
-                spent_seconds = min(remaining_elapsed, active_transport.seconds_remaining)
-                remaining_elapsed -= spent_seconds
-                self._advance_transport(landing_pad, spent_seconds)
-                if remaining_elapsed <= 0.0:
-                    return
-                continue
-
-            if self._landing_pad_total_stored(landing_pad) >= landing_pad.capacity:
-                landing_pad.next_transport_eta_seconds = None
-                return
-
-            if landing_pad.next_transport_eta_seconds is None:
-                landing_pad.next_transport_eta_seconds = _SUPPLY_INTERVAL_SECONDS
-
-            if remaining_elapsed <= 0.0:
-                return
-
-            next_transport_eta_seconds = landing_pad.next_transport_eta_seconds
-            assert next_transport_eta_seconds is not None
-            if remaining_elapsed < next_transport_eta_seconds:
-                landing_pad.next_transport_eta_seconds = next_transport_eta_seconds - remaining_elapsed
-                return
-
-            remaining_elapsed -= next_transport_eta_seconds
-            landing_pad.next_transport_eta_seconds = None
-            self._start_transport_for_landing_pad(landing_pad)
+        landing_pad.update_supply(
+            elapsed_seconds,
+            is_secured=landing_pad.is_secured(self._objective_status),
+            supply_interval_seconds=_SUPPLY_INTERVAL_SECONDS,
+            refresh_transport_geometry=lambda: self._refresh_transport_geometry(landing_pad),
+            start_transport=lambda: self._start_transport_for_landing_pad(landing_pad),
+            advance_transport=lambda spent_seconds: self._advance_transport(landing_pad, spent_seconds),
+            resource_order=_SUPPLY_RESOURCE_ORDER,
+        )
 
     def _advance_transport(self, landing_pad: LandingPadState, elapsed_seconds: float) -> None:
         active_transport = landing_pad.active_transport
         if active_transport is None:
             return
-
-        active_transport.seconds_remaining = max(0.0, active_transport.seconds_remaining - elapsed_seconds)
-        if active_transport.phase == "inbound":
-            active_transport.position = self._transport_position_for_progress(active_transport)
-            if active_transport.seconds_remaining > 0.0:
-                return
-
-            active_transport.phase = "unloading"
-            active_transport.seconds_remaining = _SUPPLY_UNLOAD_SECONDS
-            active_transport.total_phase_seconds = _SUPPLY_UNLOAD_SECONDS
-            active_transport.position = active_transport.destination_position
-            return
-
-        if active_transport.phase == "unloading":
-            active_transport.position = active_transport.destination_position
-            if active_transport.seconds_remaining > 0.0:
-                return
-
-            self._apply_transport_delivery(landing_pad, active_transport.transport_type_id)
-            active_transport.phase = "outbound"
-            active_transport.seconds_remaining = _SUPPLY_DEPARTURE_SECONDS
-            active_transport.total_phase_seconds = _SUPPLY_DEPARTURE_SECONDS
-            active_transport.position = self._transport_position_for_progress(active_transport)
-            return
-
-        active_transport.position = self._transport_position_for_progress(active_transport)
-        if active_transport.seconds_remaining > 0.0:
-            return
-
-        landing_pad.active_transport = None
-        if self._landing_pad_total_stored(landing_pad) < landing_pad.capacity:
-            landing_pad.next_transport_eta_seconds = _SUPPLY_INTERVAL_SECONDS
+        landing_pad.advance_transport(
+            elapsed_seconds=elapsed_seconds,
+            unload_seconds=_SUPPLY_UNLOAD_SECONDS,
+            departure_seconds=_SUPPLY_DEPARTURE_SECONDS,
+            delivery_cargo=SUPPLY_TRANSPORT_TYPE_SPECS[active_transport.transport_type_id].cargo,
+            supply_interval_seconds=_SUPPLY_INTERVAL_SECONDS,
+            resource_order=_SUPPLY_RESOURCE_ORDER,
+        )
 
     def _start_transport_for_landing_pad(self, landing_pad: LandingPadState) -> None:
         transport_type_id = LANDING_PAD_TYPE_SPECS[landing_pad.pad_size].transport_type_id
         destination = self._map_object_center(landing_pad.object_id)
         origin = self._transport_origin_for_destination(destination)
-        landing_pad.active_transport = SupplyTransportState(
-            transport_id=f"{landing_pad.object_id}_supply",
+        landing_pad.start_transport(
             transport_type_id=transport_type_id,
-            target_object_id=landing_pad.object_id,
-            phase="inbound",
-            position=origin,
-            seconds_remaining=_SUPPLY_APPROACH_SECONDS,
-            total_phase_seconds=_SUPPLY_APPROACH_SECONDS,
             origin_position=origin,
             destination_position=destination,
+            approach_seconds=_SUPPLY_APPROACH_SECONDS,
         )
 
     def _apply_transport_delivery(self, landing_pad: LandingPadState, transport_type_id: str) -> None:
-        transport_spec = SUPPLY_TRANSPORT_TYPE_SPECS[transport_type_id]
-        free_capacity = max(0, landing_pad.capacity - self._landing_pad_total_stored(landing_pad))
-        if free_capacity <= 0:
-            return
-
-        cargo_by_resource = {
-            resource_id: int(transport_spec.cargo.get(resource_id, 0))
-            for resource_id in _SUPPLY_RESOURCE_ORDER
-        }
-        total_cargo = sum(cargo_by_resource.values())
-        if total_cargo <= 0:
-            return
-
-        if total_cargo <= free_capacity:
-            delivered_by_resource = cargo_by_resource
-        else:
-            delivered_by_resource = {resource_id: 0 for resource_id in _SUPPLY_RESOURCE_ORDER}
-            remainders: list[tuple[float, str]] = []
-            used_capacity = 0
-            for resource_id in _SUPPLY_RESOURCE_ORDER:
-                exact_allocation = (cargo_by_resource[resource_id] / total_cargo) * free_capacity
-                base_allocation = min(cargo_by_resource[resource_id], int(math.floor(exact_allocation)))
-                delivered_by_resource[resource_id] = base_allocation
-                used_capacity += base_allocation
-                remainders.append((exact_allocation - base_allocation, resource_id))
-
-            remaining_capacity = free_capacity - used_capacity
-            for _fraction, resource_id in sorted(remainders, reverse=True):
-                if remaining_capacity <= 0:
-                    break
-                if delivered_by_resource[resource_id] >= cargo_by_resource[resource_id]:
-                    continue
-                delivered_by_resource[resource_id] += 1
-                remaining_capacity -= 1
-
-        for resource_id, delivered_amount in delivered_by_resource.items():
-            landing_pad.resources[resource_id] = int(landing_pad.resources.get(resource_id, 0)) + delivered_amount
+        landing_pad.apply_transport_delivery(
+            SUPPLY_TRANSPORT_TYPE_SPECS[transport_type_id].cargo,
+            resource_order=_SUPPLY_RESOURCE_ORDER,
+        )
 
     def _update_supply_routes(self) -> None:
         for route_id in list(sorted(self._supply_routes)):
@@ -1546,7 +1344,7 @@ class GameSession:
             self._clear_supply_route_for_unit(route.unit_id)
             return
 
-        if self._resource_total(unit.carried_resources) > 0:
+        if unit.carried_supply_total(resource_order=_SUPPLY_RESOURCE_ORDER) > 0:
             self._refresh_route_delivery(route, unit)
             return
 
@@ -1562,18 +1360,20 @@ class GameSession:
 
         source = self._landing_pads[route.source_object_id]
         destination = self._bases[route.destination_object_id]
-        available_at_source = self._landing_pad_total_stored(source)
-        free_at_destination = max(0, destination.capacity - self._resource_total(destination.resources))
+        available_at_source = source.total_stored(resource_order=_SUPPLY_RESOURCE_ORDER)
+        free_at_destination = destination.free_capacity(resource_order=_SUPPLY_RESOURCE_ORDER)
         unit_capacity = UNIT_TYPE_SPECS[unit.unit_type_id].supply_capacity
         transfer_total = min(unit_capacity, available_at_source, free_at_destination)
 
         if transfer_total <= 0:
-            unit.target = None
-            unit.path = ()
+            unit.clear_movement()
             route.phase = "awaiting_supply" if available_at_source <= 0 else "awaiting_capacity"
             return
 
-        unit.carried_resources = self._take_resources(source.resources, transfer_total)
+        unit.load_carried_resources(
+            source.take_resources(transfer_total, resource_order=_SUPPLY_RESOURCE_ORDER),
+            resource_order=_SUPPLY_RESOURCE_ORDER,
+        )
         self._set_unit_target(
             unit,
             self._object_target_point(route.destination_object_id, unit.unit_type_id),
@@ -1590,21 +1390,22 @@ class GameSession:
             return
 
         destination = self._bases[route.destination_object_id]
-        delivered_resources = self._store_resources(
-            destination.resources,
+        delivered_resources = destination.store_resources(
             unit.carried_resources,
-            destination.capacity,
+            resource_order=_SUPPLY_RESOURCE_ORDER,
         )
-        delivered_total = self._resource_total(delivered_resources)
-        carried_total = self._resource_total(unit.carried_resources)
+        delivered_total = sum(int(delivered_resources.get(resource_id, 0)) for resource_id in _SUPPLY_RESOURCE_ORDER)
+        carried_total = unit.carried_supply_total(resource_order=_SUPPLY_RESOURCE_ORDER)
         if delivered_total < carried_total:
-            unit.carried_resources = self._subtract_resources(unit.carried_resources, delivered_resources)
-            unit.target = None
-            unit.path = ()
+            unit.subtract_delivered_resources(
+                delivered_resources,
+                resource_order=_SUPPLY_RESOURCE_ORDER,
+            )
+            unit.clear_movement()
             route.phase = "awaiting_capacity"
             return
 
-        unit.carried_resources = self._empty_resource_store()
+        unit.clear_carried_resources(resource_order=_SUPPLY_RESOURCE_ORDER)
         self._set_unit_target(
             unit,
             self._object_target_point(route.source_object_id, unit.unit_type_id),
@@ -1613,14 +1414,11 @@ class GameSession:
         route.phase = "to_pickup"
 
     def _refresh_transport_geometry(self, landing_pad: LandingPadState) -> None:
-        active_transport = landing_pad.active_transport
-        if active_transport is None:
-            return
-
         destination = self._map_object_center(landing_pad.object_id)
-        active_transport.destination_position = destination
-        active_transport.origin_position = self._transport_origin_for_destination(destination)
-        active_transport.position = self._transport_position_for_progress(active_transport)
+        landing_pad.refresh_transport_geometry(
+            destination_position=destination,
+            origin_position=self._transport_origin_for_destination(destination),
+        )
 
     def _movement_pixels_per_tick(self, unit_type_id: str) -> float:  # pragma: no mutate
         width, _height = self._map_size
@@ -1677,12 +1475,7 @@ class GameSession:
         return combat.seconds_remaining
 
     def _unit_bounds(self, unit: UnitState) -> tuple[int, int, int, int]:
-        size = UNIT_TYPE_SPECS[unit.unit_type_id].marker_size_px
-        left = int(unit.position[0] - size / 2)
-        top = int(unit.position[1] - size / 2)
-        right = left + size
-        bottom = top + size
-        return (left, top, right, bottom)
+        return unit.bounds(marker_size_px=UNIT_TYPE_SPECS[unit.unit_type_id].marker_size_px)
 
     def _bounds_overlap(
         self,
@@ -1757,7 +1550,7 @@ class GameSession:
         return max(0, int(math.ceil(seconds)))
 
     def _empty_resource_store(self) -> dict[str, int]:
-        return {resource_id: 0 for resource_id in _SUPPLY_RESOURCE_ORDER}
+        return empty_resource_store()
 
     def _resource_total(self, resources: dict[str, int]) -> int:
         return sum(int(resources.get(resource_id, 0)) for resource_id in _SUPPLY_RESOURCE_ORDER)
@@ -1772,12 +1565,10 @@ class GameSession:
         return trimmed_resources
 
     def _is_landing_pad_secured(self, landing_pad: LandingPadState) -> bool:
-        if not landing_pad.secured_by_objective_id:
-            return True
-        return bool(self._objective_status.get(landing_pad.secured_by_objective_id, False))
+        return landing_pad.is_secured(self._objective_status)
 
     def _landing_pad_total_stored(self, landing_pad: LandingPadState) -> int:
-        return self._resource_total(landing_pad.resources)
+        return landing_pad.total_stored(resource_order=_SUPPLY_RESOURCE_ORDER)
 
     def _map_object_center(self, object_id: str) -> tuple[float, float]:
         map_object = next((obj for obj in self._map_objects if obj["id"] == object_id), None)
@@ -1799,7 +1590,7 @@ class GameSession:
         return math.hypot(first[0] - second[0], first[1] - second[1]) <= tolerance  # pragma: no mutate
 
     def _unit_can_transport_supplies(self, unit_type_id: str) -> bool:
-        return unit_type_id == _SUPPLY_CONVOY_UNIT_TYPE_ID
+        return UNIT_TYPE_SPECS[unit_type_id].can_transport_supplies
 
     def _supply_route_id_for_unit(self, unit_id: str) -> str | None:
         for route in self._supply_routes.values():
@@ -1826,16 +1617,16 @@ class GameSession:
         return self._is_landing_pad_secured(self._landing_pads[source_object_id])
 
     def _take_resources(self, storage: dict[str, int], amount: int) -> dict[str, int]:  # pragma: no mutate
-        remaining = max(0, int(amount))
-        taken = self._empty_resource_store()
-        for resource_id in _SUPPLY_RESOURCE_ORDER:
-            if remaining <= 0:  # pragma: no mutate
-                break
-            available = max(0, int(storage.get(resource_id, 0)))  # pragma: no mutate
-            transferred = min(available, remaining)  # pragma: no mutate
-            storage[resource_id] = available - transferred  # pragma: no mutate
-            taken[resource_id] = transferred  # pragma: no mutate
-            remaining -= transferred  # pragma: no mutate
+        pad = LandingPadState(
+            object_id="",
+            pad_size="small",
+            capacity=max(0, self._resource_total(storage)),
+            secured_by_objective_id="",
+            resources=dict(storage),
+        )
+        taken = pad.take_resources(amount, resource_order=_SUPPLY_RESOURCE_ORDER)
+        storage.clear()
+        storage.update(pad.resources)
         return taken
 
     def _store_resources(  # pragma: no mutate
@@ -1844,16 +1635,14 @@ class GameSession:
         cargo: dict[str, int],
         capacity: int,
     ) -> dict[str, int]:
-        remaining_capacity = max(0, int(capacity) - self._resource_total(storage))
-        stored = self._empty_resource_store()
-        for resource_id in _SUPPLY_RESOURCE_ORDER:
-            if remaining_capacity <= 0:  # pragma: no mutate
-                break
-            available = max(0, int(cargo.get(resource_id, 0)))  # pragma: no mutate
-            transferred = min(available, remaining_capacity)  # pragma: no mutate
-            storage[resource_id] = int(storage.get(resource_id, 0)) + transferred  # pragma: no mutate
-            stored[resource_id] = transferred  # pragma: no mutate
-            remaining_capacity -= transferred  # pragma: no mutate
+        base = BaseState(
+            object_id="",
+            capacity=capacity,
+            resources=dict(storage),
+        )
+        stored = base.store_resources(cargo, resource_order=_SUPPLY_RESOURCE_ORDER)
+        storage.clear()
+        storage.update(base.resources)
         return stored
 
     def _subtract_resources(  # pragma: no mutate
@@ -1861,13 +1650,14 @@ class GameSession:
         cargo: dict[str, int],
         delivered: dict[str, int],
     ) -> dict[str, int]:
-        remaining = self._empty_resource_store()
-        for resource_id in _SUPPLY_RESOURCE_ORDER:
-            remaining[resource_id] = max(  # pragma: no mutate
-                0,
-                int(cargo.get(resource_id, 0)) - int(delivered.get(resource_id, 0)),
-            )
-        return remaining
+        unit = UnitState(
+            unit_id="",
+            unit_type_id="infantry_squad",
+            position=(0.0, 0.0),
+            carried_resources=dict(cargo),
+        )
+        unit.subtract_delivered_resources(delivered, resource_order=_SUPPLY_RESOURCE_ORDER)
+        return unit.carried_resources
 
     def _transport_origin_for_destination(
         self,
@@ -1888,37 +1678,13 @@ class GameSession:
         end: tuple[float, float],
         progress: float,
     ) -> tuple[float, float]:
-        clamped_progress = min(max(progress, 0.0), 1.0)  # pragma: no mutate
-        return (
-            start[0] + (end[0] - start[0]) * clamped_progress,  # pragma: no mutate
-            start[1] + (end[1] - start[1]) * clamped_progress,  # pragma: no mutate
-        )
+        return interpolate_points(start, end, progress)
 
     def _transport_position_for_progress(  # pragma: no mutate
         self,
         active_transport: SupplyTransportState,
     ) -> tuple[float, float]:
-        if active_transport.phase == "unloading":
-            return active_transport.destination_position  # pragma: no mutate
-
-        progress = 1.0  # pragma: no mutate
-        if active_transport.total_phase_seconds > 0:
-            progress = 1.0 - (  # pragma: no mutate
-                active_transport.seconds_remaining / active_transport.total_phase_seconds
-            )
-
-        if active_transport.phase == "outbound":  # pragma: no mutate
-            return self._interpolate_points(  # pragma: no mutate
-                active_transport.destination_position,  # pragma: no mutate
-                active_transport.origin_position,  # pragma: no mutate
-                progress,  # pragma: no mutate
-            )
-
-        return self._interpolate_points(  # pragma: no mutate
-            active_transport.origin_position,  # pragma: no mutate
-            active_transport.destination_position,  # pragma: no mutate
-            progress,  # pragma: no mutate
-        )
+        return active_transport.progress_position()
 
 
 def create_default_game_session(
