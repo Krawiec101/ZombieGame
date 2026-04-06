@@ -2,6 +2,9 @@
 
 Prosty projekt gry w Pythonie z rozdzieleniem warstw:
 - `src/core` - logika biznesowa i symulacja (menu, sesja gry, cele misji, ruch jednostek), bez `pygame`
+- `src/core/model` - modele domenowe sesji gry
+  - `src/core/model/units` - oddzialy, dowodcy i szablony wzmocnien
+  - `src/core/model/buildings` - budynki, trasy zaopatrzenia i transporty
 - `src/ui` - warstwa prezentacji, bez wywolywania logiki core bezposrednio:
   - `src/ui/menus` - menu glowne i menu kontekstowe w trakcie gry
   - `src/ui/game_views` - widoki renderujace rozgrywke na podstawie snapshotow stanu
