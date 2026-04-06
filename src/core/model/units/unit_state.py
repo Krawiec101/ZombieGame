@@ -82,8 +82,54 @@ class UnitState:
     def carried_supply_total(self, *, resource_order: Sequence[str]) -> int:
         return sum(int(self.carried_resources.get(resource_id, 0)) for resource_id in resource_order)
 
-    def clear_carried_resources(self, *, resource_order: Sequence[str]) -> None:
+    def clear_supplies(self, *, resource_order: Sequence[str]) -> None:
         self.load_carried_resources({}, resource_order=resource_order)
+
+    def load_supplies(
+        self,
+        cargo: Mapping[str, int],
+        *,
+        capacity: int,
+        resource_order: Sequence[str],
+    ) -> dict[str, int]:
+        remaining_capacity = max(0, int(capacity) - self.carried_supply_total(resource_order=resource_order))
+        loaded = {resource_id: 0 for resource_id in resource_order}
+        updated_resources = {
+            resource_id: max(0, int(self.carried_resources.get(resource_id, 0)))
+            for resource_id in resource_order
+        }
+        for resource_id in resource_order:
+            if remaining_capacity <= 0:
+                break
+            available = max(0, int(cargo.get(resource_id, 0)))
+            transferred = min(available, remaining_capacity)
+            updated_resources[resource_id] += transferred
+            loaded[resource_id] = transferred
+            remaining_capacity -= transferred
+        self.carried_resources = updated_resources
+        return loaded
+
+    def unload_supplies(
+        self,
+        cargo: Mapping[str, int],
+        *,
+        resource_order: Sequence[str],
+    ) -> dict[str, int]:
+        unloaded = {resource_id: 0 for resource_id in resource_order}
+        updated_resources = {
+            resource_id: max(0, int(self.carried_resources.get(resource_id, 0)))
+            for resource_id in resource_order
+        }
+        for resource_id in resource_order:
+            requested = max(0, int(cargo.get(resource_id, 0)))
+            transferred = min(updated_resources[resource_id], requested)
+            updated_resources[resource_id] -= transferred
+            unloaded[resource_id] = transferred
+        self.carried_resources = updated_resources
+        return unloaded
+
+    def clear_carried_resources(self, *, resource_order: Sequence[str]) -> None:
+        self.clear_supplies(resource_order=resource_order)
 
     def load_carried_resources(
         self,
@@ -102,11 +148,5 @@ class UnitState:
         *,
         resource_order: Sequence[str],
     ) -> None:
-        self.carried_resources = {
-            resource_id: max(
-                0,
-                int(self.carried_resources.get(resource_id, 0)) - int(delivered.get(resource_id, 0)),
-            )
-            for resource_id in resource_order
-        }
+        self.unload_supplies(delivered, resource_order=resource_order)
 

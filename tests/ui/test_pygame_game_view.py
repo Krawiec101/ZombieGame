@@ -693,6 +693,35 @@ def test_selected_unit_can_create_supply_route_only_for_mechanized_unit(game_vie
     assert game_view.view.selected_unit_can_create_supply_route() is True
 
 
+def test_selected_unit_can_create_supply_route_uses_transport_flag_not_unit_type(game_view) -> None:
+    state = _sample_game_state()
+    transport_capable_infantry = state.units[0].__class__(
+        unit_id=state.units[0].unit_id,
+        unit_type_id=state.units[0].unit_type_id,
+        position=state.units[0].position,
+        target=state.units[0].target,
+        marker_size_px=state.units[0].marker_size_px,
+        can_transport_supplies=True,
+        supply_capacity=24,
+        carried_supply_total=0,
+        active_supply_route_id=None,
+    )
+    infantry_selected = GameStateSnapshot(
+        map_objects=state.map_objects,
+        units=(transport_capable_infantry, state.units[1]),
+        selected_unit_id="alpha_infantry",
+        objective_definitions=state.objective_definitions,
+        objective_progress=state.objective_progress,
+        landing_pads=state.landing_pads,
+        bases=state.bases,
+        supply_transports=state.supply_transports,
+        supply_routes=(),
+    )
+    game_view.view.apply_game_state(snapshot=infantry_selected)
+
+    assert game_view.view.selected_unit_can_create_supply_route() is True
+
+
 def test_render_draws_supply_route_planning_overlay(game_view) -> None:
     game_view.view.apply_game_state(snapshot=_sample_game_state())
 

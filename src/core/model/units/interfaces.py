@@ -34,6 +34,23 @@ class SupportsCargo(Protocol):
 
     def carried_supply_total(self, *, resource_order: Sequence[str]) -> int: ...
 
+    def clear_supplies(self, *, resource_order: Sequence[str]) -> None: ...
+
+    def load_supplies(
+        self,
+        cargo: Mapping[str, int],
+        *,
+        capacity: int,
+        resource_order: Sequence[str],
+    ) -> dict[str, int]: ...
+
+    def unload_supplies(
+        self,
+        cargo: Mapping[str, int],
+        *,
+        resource_order: Sequence[str],
+    ) -> dict[str, int]: ...
+
     def clear_carried_resources(self, *, resource_order: Sequence[str]) -> None: ...
 
     def load_carried_resources(
