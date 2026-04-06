@@ -59,7 +59,6 @@ _SUPPLY_TRANSPORT_STYLES: dict[str, dict[str, Any]] = {
         "size": (38, 14),
     },
 }
-_SUPPLY_CONVOY_UNIT_TYPE_ID = "mechanized_squad"
 _LANDING_PAD_SIZE_TEXT_KEYS = {
     "small": "game.map.object.landing_pad.size.small",
     "large": "game.map.object.landing_pad.size.large",
@@ -472,8 +471,7 @@ class PygameGameView:
         if selected_unit is None:
             return False
         return (
-            selected_unit.unit_type_id == _SUPPLY_CONVOY_UNIT_TYPE_ID
-            and selected_unit.can_transport_supplies
+            selected_unit.can_transport_supplies
             and selected_unit.active_supply_route_id is None
         )
 

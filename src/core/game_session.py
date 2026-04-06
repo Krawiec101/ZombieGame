@@ -47,6 +47,7 @@ from core.mission_objectives import (
     create_default_mission_objectives_evaluator,
 )
 from core.scenario_config import load_default_scenario_config
+from core.supply_route_manager import DEFAULT_SUPPLY_CONVOY_UNIT_TYPE_IDS, SupplyRouteManager
 
 _SIMULATION_SECONDS_PER_TICK = 8.0
 _SUPPLY_INTERVAL_SECONDS = 45.0
@@ -59,7 +60,6 @@ _COMBAT_EXCHANGE_INTERVAL_SECONDS = 6.0
 _COMBAT_NOTIFICATION_DURATION_SECONDS = 12.0
 _SUPPLY_RESOURCE_ORDER = SUPPLY_RESOURCE_ORDER
 _BASE_SUPPLY_CAPACITY = 120
-_SUPPLY_CONVOY_UNIT_TYPE_ID = "mechanized_squad"
 _TRANSPORT_SPAWN_OFFSET_X = 96.0
 _TRANSPORT_SPAWN_OFFSET_Y = 120.0
 _ZOMBIE_GROUP_MARKER_SIZE_PX = 22
@@ -164,8 +164,8 @@ UNIT_TYPE_SPECS: dict[str, UnitTypeSpec] = {
         attack=4,
         defense=5,
     ),
-    _SUPPLY_CONVOY_UNIT_TYPE_ID: UnitTypeSpec(
-        type_id=_SUPPLY_CONVOY_UNIT_TYPE_ID,
+    "mechanized_squad": UnitTypeSpec(
+        type_id="mechanized_squad",
         speed_kmph=18.0,
         marker_size_px=20,
         armament_key="game.unit.armament.apc_autocannon",
@@ -222,7 +222,11 @@ class GameSession:
         self._roads: list[dict[str, Any]] = []
         self._bases: dict[str, BaseState] = {}
         self._landing_pads: dict[str, LandingPadState] = {}
-        self._supply_routes: dict[str, SupplyRouteState] = {}
+        self._supply_route_manager = SupplyRouteManager(
+            resource_order=_SUPPLY_RESOURCE_ORDER,
+            convoy_unit_type_ids=DEFAULT_SUPPLY_CONVOY_UNIT_TYPE_IDS,
+        )
+        self._supply_routes = {}
         self._units: list[UnitState] = []
         self._enemy_groups: list[ZombieGroupState] = []
         self._combats: dict[str, CombatState] = {}
@@ -242,7 +246,7 @@ class GameSession:
         self._roads = []
         self._bases = {}
         self._landing_pads = {}
-        self._supply_routes = {}
+        self._supply_route_manager.clear()
         self._selected_unit_id = None
         self._combats = {}
         self._combat_notifications = []
@@ -256,6 +260,14 @@ class GameSession:
         self._objective_status = {
             definition["objective_id"]: False for definition in self._objective_definitions
         }
+
+    @property
+    def _supply_routes(self) -> dict[str, SupplyRouteState]:
+        return self._supply_route_manager.routes
+
+    @_supply_routes.setter
+    def _supply_routes(self, routes: dict[str, SupplyRouteState]) -> None:
+        self._supply_route_manager.routes = routes
 
     def update_map_dimensions(self, *, width: int, height: int) -> None:
         if width <= 0 or height <= 0:
@@ -341,31 +353,20 @@ class GameSession:
         self._selected_unit_id = None
 
     def handle_supply_route(self, *, source_object_id: str, destination_object_id: str) -> None:
-        selected_unit = self._get_selected_unit()
-        if selected_unit is None:
-            return
-
-        if not self._unit_can_transport_supplies(selected_unit.unit_type_id):
-            return
-
-        if not self._is_valid_supply_route_pair(
+        self._supply_route_manager.create_route(
+            selected_unit=self._get_selected_unit(),
             source_object_id=source_object_id,
             destination_object_id=destination_object_id,
-        ):
-            return
-
-        self._clear_supply_route_for_unit(selected_unit.unit_id)
-        selected_unit.clear_movement()
-        selected_unit.clear_carried_resources(resource_order=_SUPPLY_RESOURCE_ORDER)
-        route = SupplyRouteState(
-            route_id=f"{selected_unit.unit_id}:{source_object_id}->{destination_object_id}",
-            unit_id=selected_unit.unit_id,
-            source_object_id=source_object_id,
-            destination_object_id=destination_object_id,
-            phase="to_pickup",
+            landing_pads=self._landing_pads,
+            bases=self._bases,
+            is_landing_pad_secured=self._is_landing_pad_secured,
+            object_target_point=self._object_target_point,
+            positions_match=self._positions_match,
+            set_unit_target=lambda unit, target: self._set_unit_target(unit, target, road_mode="only"),
+            unit_supply_capacity=lambda unit_type_id: UNIT_TYPE_SPECS[unit_type_id].supply_capacity,
+            find_unit_by_id=self._find_unit_by_id,
+            refresh_route=self._refresh_supply_route,
         )
-        self._supply_routes[route.route_id] = route
-        self._refresh_supply_route(route)
 
     def map_objects_snapshot(self) -> list[dict[str, Any]]:
         return [{"id": obj["id"], "bounds": obj["bounds"]} for obj in self._map_objects]
@@ -544,36 +545,13 @@ class GameSession:
         return tuple(snapshots)
 
     def supply_routes_snapshot(self) -> tuple[SupplyRouteSnapshot, ...]:
-        snapshots: list[SupplyRouteSnapshot] = []
-        for route_id in sorted(self._supply_routes):
-            route = self._supply_routes[route_id]
-            unit = self._find_unit_by_id(route.unit_id)
-            if unit is None:
-                continue
-            snapshots.append(
-                SupplyRouteSnapshot(  # pragma: no mutate
-                    route_id=route.route_id,  # pragma: no mutate
-                    unit_id=route.unit_id,  # pragma: no mutate
-                    source_object_id=route.source_object_id,  # pragma: no mutate
-                    destination_object_id=route.destination_object_id,  # pragma: no mutate
-                    phase=route.phase,  # pragma: no mutate
-                    carried_total=unit.carried_supply_total(resource_order=_SUPPLY_RESOURCE_ORDER),  # pragma: no mutate
-                    capacity=UNIT_TYPE_SPECS[unit.unit_type_id].supply_capacity,  # pragma: no mutate
-                )
-            )
-        return tuple(snapshots)
+        return self._supply_route_manager.supply_routes_snapshot(
+            find_unit_by_id=self._find_unit_by_id,
+            unit_supply_capacity=lambda unit_type_id: UNIT_TYPE_SPECS[unit_type_id].supply_capacity,
+        )
 
     def supply_routes_state_snapshot(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "route_id": route.route_id,
-                "unit_id": route.unit_id,
-                "source_object_id": route.source_object_id,
-                "destination_object_id": route.destination_object_id,
-                "phase": route.phase,
-            }
-            for route in self._supply_routes.values()
-        ]
+        return self._supply_route_manager.supply_routes_state_snapshot()
 
     def objective_status_snapshot(self) -> dict[str, bool]:
         return dict(self._objective_status)
@@ -1217,7 +1195,7 @@ class GameSession:
         return self._deduplicate_points(path)  # pragma: no mutate
 
     def _road_mode_for_unit(self, unit_type_id: str) -> str:
-        if unit_type_id == _SUPPLY_CONVOY_UNIT_TYPE_ID:  # pragma: no mutate
+        if self._supply_route_manager.can_unit_type_create_convoy(unit_type_id):  # pragma: no mutate
             return "prefer"  # pragma: no mutate
         return "off"  # pragma: no mutate
 
@@ -1335,83 +1313,38 @@ class GameSession:
             self._refresh_supply_route(route)
 
     def _refresh_supply_route(self, route: SupplyRouteState) -> None:
-        unit = self._find_unit_by_id(route.unit_id)
-        if unit is None:
-            self._supply_routes.pop(route.route_id, None)
-            return
-
-        if route.source_object_id not in self._landing_pads or route.destination_object_id not in self._bases:
-            self._clear_supply_route_for_unit(route.unit_id)
-            return
-
-        if unit.carried_supply_total(resource_order=_SUPPLY_RESOURCE_ORDER) > 0:
-            self._refresh_route_delivery(route, unit)
-            return
-
-        self._refresh_route_pickup(route, unit)
+        self._supply_route_manager.refresh_route(
+            route,
+            find_unit_by_id=self._find_unit_by_id,
+            landing_pads=self._landing_pads,
+            bases=self._bases,
+            object_target_point=self._object_target_point,
+            positions_match=self._positions_match,
+            set_unit_target=lambda unit, target: self._set_unit_target(unit, target, road_mode="only"),
+            unit_supply_capacity=lambda unit_type_id: UNIT_TYPE_SPECS[unit_type_id].supply_capacity,
+        )
 
     def _refresh_route_pickup(self, route: SupplyRouteState, unit: UnitState) -> None:
-        pickup_target = self._object_target_point(route.source_object_id, unit.unit_type_id)
-        if not self._positions_match(unit.position, pickup_target):
-            if unit.target is None or not self._positions_match(unit.target, pickup_target):
-                self._set_unit_target(unit, pickup_target, road_mode="only")
-            route.phase = "to_pickup"
-            return
-
-        source = self._landing_pads[route.source_object_id]
-        destination = self._bases[route.destination_object_id]
-        available_at_source = source.total_stored(resource_order=_SUPPLY_RESOURCE_ORDER)
-        free_at_destination = destination.free_capacity(resource_order=_SUPPLY_RESOURCE_ORDER)
-        unit_capacity = UNIT_TYPE_SPECS[unit.unit_type_id].supply_capacity
-        transfer_total = min(unit_capacity, available_at_source, free_at_destination)
-
-        if transfer_total <= 0:
-            unit.clear_movement()
-            route.phase = "awaiting_supply" if available_at_source <= 0 else "awaiting_capacity"
-            return
-
-        unit.load_carried_resources(
-            source.take_resources(transfer_total, resource_order=_SUPPLY_RESOURCE_ORDER),
-            resource_order=_SUPPLY_RESOURCE_ORDER,
-        )
-        self._set_unit_target(
+        self._supply_route_manager.refresh_route_pickup(
+            route,
             unit,
-            self._object_target_point(route.destination_object_id, unit.unit_type_id),
-            road_mode="only",
+            landing_pads=self._landing_pads,
+            bases=self._bases,
+            object_target_point=self._object_target_point,
+            positions_match=self._positions_match,
+            set_unit_target=lambda active_unit, target: self._set_unit_target(active_unit, target, road_mode="only"),
+            unit_supply_capacity=lambda unit_type_id: UNIT_TYPE_SPECS[unit_type_id].supply_capacity,
         )
-        route.phase = "to_dropoff"
 
     def _refresh_route_delivery(self, route: SupplyRouteState, unit: UnitState) -> None:
-        dropoff_target = self._object_target_point(route.destination_object_id, unit.unit_type_id)
-        if not self._positions_match(unit.position, dropoff_target):
-            if unit.target is None or not self._positions_match(unit.target, dropoff_target):
-                self._set_unit_target(unit, dropoff_target, road_mode="only")
-            route.phase = "to_dropoff"
-            return
-
-        destination = self._bases[route.destination_object_id]
-        delivered_resources = destination.store_resources(
-            unit.carried_resources,
-            resource_order=_SUPPLY_RESOURCE_ORDER,
-        )
-        delivered_total = sum(int(delivered_resources.get(resource_id, 0)) for resource_id in _SUPPLY_RESOURCE_ORDER)
-        carried_total = unit.carried_supply_total(resource_order=_SUPPLY_RESOURCE_ORDER)
-        if delivered_total < carried_total:
-            unit.subtract_delivered_resources(
-                delivered_resources,
-                resource_order=_SUPPLY_RESOURCE_ORDER,
-            )
-            unit.clear_movement()
-            route.phase = "awaiting_capacity"
-            return
-
-        unit.clear_carried_resources(resource_order=_SUPPLY_RESOURCE_ORDER)
-        self._set_unit_target(
+        self._supply_route_manager.refresh_route_delivery(
+            route,
             unit,
-            self._object_target_point(route.source_object_id, unit.unit_type_id),
-            road_mode="only",
+            bases=self._bases,
+            object_target_point=self._object_target_point,
+            positions_match=self._positions_match,
+            set_unit_target=lambda active_unit, target: self._set_unit_target(active_unit, target, road_mode="only"),
         )
-        route.phase = "to_pickup"
 
     def _refresh_transport_geometry(self, landing_pad: LandingPadState) -> None:
         destination = self._map_object_center(landing_pad.object_id)
@@ -1593,18 +1526,13 @@ class GameSession:
         return UNIT_TYPE_SPECS[unit_type_id].can_transport_supplies
 
     def _supply_route_id_for_unit(self, unit_id: str) -> str | None:
-        for route in self._supply_routes.values():
-            if route.unit_id == unit_id:
-                return route.route_id
-        return None
+        return self._supply_route_manager.route_id_for_unit(unit_id)
 
     def _unit_has_supply_route(self, unit_id: str) -> bool:
-        return self._supply_route_id_for_unit(unit_id) is not None
+        return self._supply_route_manager.unit_has_route(unit_id)
 
     def _clear_supply_route_for_unit(self, unit_id: str) -> None:  # pragma: no mutate
-        route_id = self._supply_route_id_for_unit(unit_id)
-        if route_id is not None:  # pragma: no mutate
-            self._supply_routes.pop(route_id, None)
+        self._supply_route_manager.clear_route_for_unit(unit_id)
 
     def _is_valid_supply_route_pair(  # pragma: no mutate
         self,
@@ -1612,9 +1540,13 @@ class GameSession:
         source_object_id: str,
         destination_object_id: str,
     ) -> bool:
-        if source_object_id not in self._landing_pads or destination_object_id not in self._bases:
-            return False
-        return self._is_landing_pad_secured(self._landing_pads[source_object_id])
+        return self._supply_route_manager.is_valid_route_pair(
+            source_object_id=source_object_id,
+            destination_object_id=destination_object_id,
+            landing_pads=self._landing_pads,
+            bases=self._bases,
+            is_landing_pad_secured=self._is_landing_pad_secured,
+        )
 
     def _take_resources(self, storage: dict[str, int], amount: int) -> dict[str, int]:  # pragma: no mutate
         pad = LandingPadState(
