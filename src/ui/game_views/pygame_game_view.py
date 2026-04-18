@@ -72,6 +72,11 @@ _TRANSPORT_TYPE_TEXT_KEYS = {
     "light_supply_helicopter": "game.transport.type.light_supply_helicopter",
     "heavy_supply_helicopter": "game.transport.type.heavy_supply_helicopter",
 }
+_LANDING_PAD_TRANSPORT_STATUS_TEXT_KEYS = {
+    "inbound": "game.map.object.landing_pad.status.inbound",
+    "unloading": "game.map.object.landing_pad.status.unloading",
+    "outbound": "game.map.object.landing_pad.status.outbound",
+}
 _RECON_SITE_STYLE = ((132, 110, 84), (214, 192, 146))
 _RECON_SITE_TEXT_KEYS = ("game.map.object.recon_site.name", "game.map.object.recon_site.description")
 
@@ -759,23 +764,10 @@ class PygameGameView:
         if not landing_pad.is_secured:
             return text("game.map.object.landing_pad.status.unsecured")
 
-        if landing_pad.active_transport_phase == "inbound":
+        transport_status_key = _LANDING_PAD_TRANSPORT_STATUS_TEXT_KEYS.get(landing_pad.active_transport_phase)
+        if transport_status_key is not None:
             return text(
-                "game.map.object.landing_pad.status.inbound",
-                helicopter=self._transport_type_label(landing_pad.active_transport_type_id),
-                seconds=landing_pad.active_transport_seconds_remaining or 0,
-            )
-
-        if landing_pad.active_transport_phase == "unloading":
-            return text(
-                "game.map.object.landing_pad.status.unloading",
-                helicopter=self._transport_type_label(landing_pad.active_transport_type_id),
-                seconds=landing_pad.active_transport_seconds_remaining or 0,
-            )
-
-        if landing_pad.active_transport_phase == "outbound":
-            return text(
-                "game.map.object.landing_pad.status.outbound",
+                transport_status_key,
                 helicopter=self._transport_type_label(landing_pad.active_transport_type_id),
                 seconds=landing_pad.active_transport_seconds_remaining or 0,
             )

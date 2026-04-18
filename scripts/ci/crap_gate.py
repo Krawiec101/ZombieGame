@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
-MAX_CRAP_PER_FUNCTION = 30.0
+MAX_CRAP_PER_FUNCTION = 12.0
 MAX_HIGH_CRAP_FUNCTIONS = 0
 MIN_COVERAGE_FOR_HIGH_COMPLEXITY = 0.80
 HIGH_COMPLEXITY_THRESHOLD = 15
