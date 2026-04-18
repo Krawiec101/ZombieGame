@@ -30,6 +30,13 @@ _MENU_OPTION_LABEL_KEYS = {
 _WINDOWED_FALLBACK_SIZE = (1280, 720)
 _MODAL_SHELL_SIZE = (480, 248)
 _UNIT_CONTEXT_MENU_HOLD_SECONDS = 1.0
+_FRAME_SYNC_MODES = {
+    "game",
+    "game_report_modal",
+    "game_context_menu",
+    "game_unit_context_menu",
+    "game_supply_route_planning",
+}
 
 
 class PygameMainMenuView:
@@ -105,37 +112,37 @@ class PygameMainMenuView:
                 events.append(ExitRequested())
                 continue
 
-            if self._mode == "menu":
-                self._handle_menu_event(pygame_event, events)
-            elif self._mode == "name_modal":
-                self._handle_name_modal_event(pygame_event, events)
-            elif self._mode == "welcome_modal":
-                self._handle_welcome_modal_event(pygame_event, events)
-            elif self._mode == "game_report_modal":
-                self._handle_game_report_modal_event(pygame_event)
-            elif self._mode == "game":
-                self._handle_game_event(pygame_event, events)
-            elif self._mode == "game_context_menu":
-                self._handle_game_context_menu_event(pygame_event, events)
-            elif self._mode == "game_unit_context_menu":
-                self._handle_unit_context_menu_event(pygame_event, events)
-            elif self._mode == "game_supply_route_planning":
-                self._handle_supply_route_planning_event(pygame_event, events)
+            self._dispatch_ui_event(pygame_event, events)
 
         self._update_mouse_holds()
 
-        if self._mode in {
-            "game",
-            "game_report_modal",
-            "game_context_menu",
-            "game_unit_context_menu",
-            "game_supply_route_planning",
-        }:
+        if self._should_emit_game_frame_sync():
             width, height = self._screen.get_size()
             events.append(GameFrameSyncRequested(width=width, height=height))
 
         self._clock.tick(60)
         return events
+
+    def _dispatch_ui_event(self, pygame_event: Any, events: list[UIEvent]) -> None:
+        handlers = {
+            "menu": self._handle_menu_event,
+            "name_modal": self._handle_name_modal_event,
+            "welcome_modal": self._handle_welcome_modal_event,
+            "game_report_modal": self._handle_game_report_modal_input,
+            "game": self._handle_game_event,
+            "game_context_menu": self._handle_game_context_menu_event,
+            "game_unit_context_menu": self._handle_unit_context_menu_event,
+            "game_supply_route_planning": self._handle_supply_route_planning_event,
+        }
+        handler = handlers.get(self._mode)
+        if handler is not None:
+            handler(pygame_event, events)
+
+    def _handle_game_report_modal_input(self, pygame_event: Any, _events: list[UIEvent]) -> None:
+        self._handle_game_report_modal_event(pygame_event)
+
+    def _should_emit_game_frame_sync(self) -> bool:
+        return self._mode in _FRAME_SYNC_MODES
 
     def handle_domain_event(self, event: DomainEvent) -> None:
         if isinstance(event, NewGameFlowRouted):

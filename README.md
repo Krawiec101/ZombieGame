@@ -102,7 +102,7 @@ Pipeline CI uruchamia `pytest` z `pytest-cov` dla testow funkcjonalnych/jednostk
 
 Po kroku coverage dziala tez bramka CRAP (Change Risk Anti-Patterns), liczona na podstawie `coverage.xml` i cyclomatic complexity z `radon`.
 Progi startowe w CI:
-- `max_crap_per_function = 30.0`
+- `max_crap_per_function = 12.0`
 - `max_high_crap_functions = 0`
 - `min_coverage_for_high_complexity = 80%`
 - `high_complexity_threshold = 15`

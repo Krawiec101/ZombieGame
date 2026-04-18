@@ -149,7 +149,7 @@ def test_crap_gate_passes_for_fully_covered_low_complexity_function(tmp_path: Pa
     assert result.returncode == 0
     summary = summary_md.read_text(encoding="utf-8")
     assert "Status: **PASS**" in summary
-    assert "Functions with `CRAP > 30.0`: **0**" in summary
+    assert "Functions with `CRAP > 12.0`: **0**" in summary
     assert "`healthy`" in summary
 
 
@@ -189,7 +189,7 @@ def test_crap_gate_fails_when_function_exceeds_crap_threshold(tmp_path: Path) ->
     assert result.returncode == 1
     summary = summary_md.read_text(encoding="utf-8")
     assert "Status: **FAIL**" in summary
-    assert "Functions with `CRAP > 30.0`: **1**" in summary
+    assert "Functions with `CRAP > 12.0`: **1**" in summary
     assert "`risky`" in summary
 
 
@@ -259,7 +259,7 @@ def test_calculate_function_coverage_marks_missing_data() -> None:
 
 def test_build_summary_reports_missing_coverage() -> None:
     thresholds = CRAP_GATE.CrapThresholds(
-        max_crap_per_function=30.0,
+        max_crap_per_function=12.0,
         max_high_crap_functions=0,
         min_coverage_for_high_complexity=0.80,
         high_complexity_threshold=15,

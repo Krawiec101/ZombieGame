@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -344,6 +345,10 @@ def _sample_game_state(
     )
 
 
+def _replace_landing_pad(state: GameStateSnapshot, **changes) -> LandingPadSnapshot:
+    return replace(state.landing_pads[0], **changes)
+
+
 def _blitted_texts(screen: _FakeScreen) -> list[str]:
     return [surface._text for surface, _position in screen.blit_calls if hasattr(surface, "_text")]
 
@@ -581,17 +586,12 @@ def test_render_draws_curved_road_segments(game_view) -> None:
 
 def test_render_shows_outbound_transport_status_in_tooltip(game_view) -> None:
     state = _sample_game_state()
-    outbound_landing_pad = state.landing_pads[0].__class__(
-        object_id=state.landing_pads[0].object_id,
-        pad_size=state.landing_pads[0].pad_size,
-        is_secured=state.landing_pads[0].is_secured,
-        capacity=state.landing_pads[0].capacity,
-        total_stored=state.landing_pads[0].total_stored,
+    outbound_landing_pad = _replace_landing_pad(
+        state,
         next_transport_seconds=None,
         active_transport_type_id="light_supply_helicopter",
         active_transport_phase="outbound",
         active_transport_seconds_remaining=6,
-        resources=state.landing_pads[0].resources,
     )
     outbound_transport = state.supply_transports[0].__class__(
         transport_id=state.supply_transports[0].transport_id,
@@ -617,6 +617,61 @@ def test_render_shows_outbound_transport_status_in_tooltip(game_view) -> None:
 
     texts = _blitted_texts(game_view.screen)
     assert "game.map.object.landing_pad.status.outbound" in texts
+
+
+@pytest.mark.parametrize(
+    ("landing_pad", "expected_status_key"),
+    [
+        (
+            {
+                "is_secured": False,
+            },
+            "game.map.object.landing_pad.status.unsecured",
+        ),
+        (
+            {
+                "next_transport_seconds": None,
+                "active_transport_phase": "unloading",
+                "active_transport_seconds_remaining": 3,
+            },
+            "game.map.object.landing_pad.status.unloading",
+        ),
+        (
+            {
+                "active_transport_phase": None,
+                "active_transport_type_id": None,
+                "active_transport_seconds_remaining": None,
+                "total_stored": 90,
+                "next_transport_seconds": None,
+            },
+            "game.map.object.landing_pad.status.full",
+        ),
+        (
+            {
+                "active_transport_phase": None,
+                "active_transport_type_id": None,
+                "active_transport_seconds_remaining": None,
+                "next_transport_seconds": 45,
+            },
+            "game.map.object.landing_pad.status.next_transport",
+        ),
+        (
+            {
+                "active_transport_phase": None,
+                "active_transport_type_id": None,
+                "active_transport_seconds_remaining": None,
+                "next_transport_seconds": None,
+            },
+            "game.map.object.landing_pad.status.awaiting",
+        ),
+    ],
+)
+def test_landing_pad_status_line_selects_expected_status(game_view, landing_pad, expected_status_key) -> None:
+    state = _sample_game_state()
+
+    status = game_view.view._landing_pad_status_line(_replace_landing_pad(state, **landing_pad))
+
+    assert status == expected_status_key
 
 
 def test_render_hides_tooltip_when_mouse_is_outside_objects(game_view) -> None:
