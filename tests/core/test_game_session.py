@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import replace
 
 from contracts.game_state import (
     BaseSnapshot,
@@ -998,7 +999,7 @@ def test_right_click_without_selection_is_noop() -> None:
     assert session.selected_unit_id() is None
 
 
-def test_supply_route_can_be_created_only_for_motorized_selected_unit() -> None:
+def test_supply_route_can_be_created_only_for_transport_capable_selected_unit() -> None:
     session = create_default_game_session()
     session.update_map_dimensions(width=960, height=640)
     session.tick()
@@ -1008,6 +1009,36 @@ def test_supply_route_can_be_created_only_for_motorized_selected_unit() -> None:
     session.handle_supply_route(source_object_id="landing_pad", destination_object_id="hq")
 
     assert session.supply_routes_snapshot() == ()
+
+
+def test_handle_supply_route_accepts_transport_capable_unit_outside_legacy_convoy_allowlist() -> None:
+    session = create_default_game_session()
+    session.update_map_dimensions(width=960, height=640)
+    session.tick()
+    session._objective_status["landing_pad_cleared"] = True
+    original_infantry_spec = UNIT_TYPE_SPECS["infantry_squad"]
+    UNIT_TYPE_SPECS["cargo_truck"] = original_infantry_spec.__class__(
+        type_id="cargo_truck",
+        speed_kmph=12.0,
+        marker_size_px=original_infantry_spec.marker_size_px,
+        armament_key=original_infantry_spec.armament_key,
+        attack=original_infantry_spec.attack,
+        defense=original_infantry_spec.defense,
+        can_transport_supplies=True,
+        supply_capacity=18,
+    )
+    alpha_infantry = session._find_unit_by_id("alpha_infantry")
+    assert alpha_infantry is not None
+    try:
+        alpha_infantry.unit_type_id = "cargo_truck"
+        session._selected_unit_id = alpha_infantry.unit_id
+
+        session.handle_supply_route(source_object_id="landing_pad", destination_object_id="hq")
+    finally:
+        UNIT_TYPE_SPECS.pop("cargo_truck", None)
+        alpha_infantry.unit_type_id = "infantry_squad"
+
+    assert tuple(session._supply_routes) == ("alpha_infantry:landing_pad->hq",)
 
 
 def test_supply_route_requires_selection_and_valid_objects() -> None:
@@ -1073,13 +1104,13 @@ def test_supply_route_moves_motorized_unit_and_transfers_supply_to_hq() -> None:
     )
 
     for _ in range(800):
+        clock.advance(1)
         session.tick()
         route = session.supply_routes_snapshot()[0]
         if route.phase == "to_pickup" and route.carried_total == 0 and session.bases_snapshot()[0].total_stored > 0:
             break
 
     assert session.bases_snapshot()[0].total_stored == 24
-    assert session.landing_pads_snapshot()[0].total_stored == 6
     assert session.supply_routes_snapshot()[0].phase == "to_pickup"
 
 
@@ -1826,7 +1857,7 @@ def test_update_supply_routes_handles_missing_units_and_invalid_destinations() -
         ),
     }
 
-    session._update_supply_routes()
+    session._update_supply_routes(elapsed_seconds=0.0)
     assert session._supply_routes == {}
 
     session._units = [
@@ -1842,7 +1873,7 @@ def test_update_supply_routes_handles_missing_units_and_invalid_destinations() -
         ),
     }
 
-    session._update_supply_routes()
+    session._update_supply_routes(elapsed_seconds=0.0)
 
     assert session._supply_routes == {}
 
@@ -1898,10 +1929,11 @@ def test_refresh_route_pickup_transfers_single_available_resource_instead_of_wai
 
     session._refresh_route_pickup(route, unit)
 
-    assert unit.carried_resources == {"fuel": 1, "mre": 0, "ammo": 0}
-    assert session._landing_pads["landing_pad"].resources == {"fuel": 0, "mre": 0, "ammo": 0}
-    assert unit.target == session._object_target_point("hq", "mechanized_squad")
-    assert route.phase == "to_dropoff"
+    assert unit.carried_resources == {}
+    assert session._landing_pads["landing_pad"].resources == {"fuel": 1, "mre": 0, "ammo": 0}
+    assert unit.target is None
+    assert route.phase == "loading"
+    assert route.service_seconds_remaining == 6.0
 
 
 def test_refresh_route_delivery_waits_for_capacity_and_preserves_remaining_cargo() -> None:
@@ -1925,9 +1957,10 @@ def test_refresh_route_delivery_waits_for_capacity_and_preserves_remaining_cargo
 
     session._refresh_route_delivery(route, unit)
 
-    assert route.phase == "awaiting_capacity"
+    assert route.phase == "unloading"
     assert unit.target is None
-    assert unit.carried_resources == {"fuel": 9, "mre": 8, "ammo": 6}
+    assert unit.carried_resources == {"fuel": 10, "mre": 8, "ammo": 6}
+    assert route.service_seconds_remaining == 6.0
 
 
 def test_helpers_cover_missing_map_object_route_clear_and_resource_math() -> None:
@@ -2675,10 +2708,11 @@ def test_refresh_route_pickup_transfers_minimum_of_source_destination_and_unit_c
 
     session._refresh_route_pickup(route, unit)
 
-    assert unit.carried_resources == {"fuel": 2, "mre": 0, "ammo": 0}
-    assert session._landing_pads["landing_pad"].resources == {"fuel": 1, "mre": 4, "ammo": 10}
-    assert unit.target == session._object_target_point("hq", "mechanized_squad")
-    assert route.phase == "to_dropoff"
+    assert unit.carried_resources == {}
+    assert session._landing_pads["landing_pad"].resources == {"fuel": 3, "mre": 4, "ammo": 10}
+    assert unit.target is None
+    assert route.phase == "loading"
+    assert route.service_seconds_remaining == 6.0
 
 
 def test_refresh_route_delivery_drops_all_cargo_and_returns_unit_to_pickup() -> None:
@@ -2702,10 +2736,41 @@ def test_refresh_route_delivery_drops_all_cargo_and_returns_unit_to_pickup() -> 
 
     session._refresh_route_delivery(route, unit)
 
-    assert session._bases["hq"].resources == {"fuel": 3, "mre": 4, "ammo": 5}
-    assert unit.carried_resources == {"fuel": 0, "mre": 0, "ammo": 0}
-    assert unit.target == session._object_target_point("landing_pad", "mechanized_squad")
-    assert route.phase == "to_pickup"
+    assert session._bases["hq"].resources == {"fuel": 1, "mre": 1, "ammo": 1}
+    assert unit.carried_resources == {"fuel": 2, "mre": 3, "ammo": 4}
+    assert unit.target is None
+    assert route.phase == "unloading"
+    assert route.service_seconds_remaining == 6.0
+
+
+def test_refresh_supply_route_uses_unit_type_service_times_from_specs(monkeypatch) -> None:
+    session = create_default_game_session()
+    session.update_map_dimensions(width=960, height=640)
+    session.tick()
+    unit = UnitState(
+        unit_id="u1",
+        unit_type_id="mechanized_squad",
+        position=session._object_target_point("landing_pad", "mechanized_squad"),
+    )
+    route = SupplyRouteState(
+        route_id="u1-route",
+        unit_id="u1",
+        source_object_id="landing_pad",
+        destination_object_id="hq",
+        phase="to_pickup",
+    )
+    session._units = [unit]
+    session._landing_pads["landing_pad"].resources = {"fuel": 4, "mre": 0, "ammo": 0}
+    monkeypatch.setitem(
+        UNIT_TYPE_SPECS,
+        "mechanized_squad",
+        replace(UNIT_TYPE_SPECS["mechanized_squad"], supply_load_seconds=9.0, supply_unload_seconds=11.0),
+    )
+
+    session._refresh_supply_route(route)
+
+    assert route.phase == "loading"
+    assert route.service_seconds_remaining == 9.0
 
 
 def test_resource_helpers_trim_take_and_store_in_resource_order() -> None:
@@ -3935,7 +4000,9 @@ def test_update_supply_routes_continues_after_removing_missing_unit_route() -> N
     session = create_default_game_session()
     session._units = [UnitState(unit_id="u2", unit_type_id="mechanized_squad", position=(10.0, 10.0))]
     handled_route_ids: list[str] = []
-    session._refresh_supply_route = lambda route: handled_route_ids.append(route.route_id)  # type: ignore[method-assign]
+    session._refresh_supply_route = (  # type: ignore[method-assign]
+        lambda route, *, elapsed_seconds=0.0: handled_route_ids.append(route.route_id)
+    )
     session._supply_routes = {
         "a-missing": SupplyRouteState(
             route_id="a-missing",
@@ -3953,7 +4020,7 @@ def test_update_supply_routes_continues_after_removing_missing_unit_route() -> N
         ),
     }
 
-    session._update_supply_routes()
+    session._update_supply_routes(elapsed_seconds=0.0)
 
     assert "a-missing" not in session._supply_routes
     assert handled_route_ids == ["z-present"]
@@ -3997,7 +4064,7 @@ def test_tick_passes_runtime_snapshots_and_elapsed_times_to_subsystems() -> None
     session._update_supply_network = lambda *, elapsed_seconds: recorded.setdefault(
         "supply_network", elapsed_seconds
     )
-    session._update_supply_routes = lambda: recorded.setdefault("supply_routes", True)
+    session._update_supply_routes = lambda *, elapsed_seconds: recorded.setdefault("supply_routes", elapsed_seconds)
 
     session.tick()
 
@@ -4009,7 +4076,7 @@ def test_tick_passes_runtime_snapshots_and_elapsed_times_to_subsystems() -> None
         "investigate_recon_sites": True,
         "main_objective_reports": True,
         "supply_network": 7.5,
-        "supply_routes": True,
+        "supply_routes": 7.5,
     }
     assert len(evaluator.calls) == 1
     assert evaluator.calls[0]["units"] == session.units_snapshot()

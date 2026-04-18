@@ -1,6 +1,6 @@
 jupyterlab==4.4.8
 ipykernel==6.29.5
-pytest==8.3.2
+pytest==9.0.3
 pytest-cov==5.0.0
 pytestarch==4.0.1
 pygame==2.6.1

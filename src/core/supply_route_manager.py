@@ -15,14 +15,17 @@ ObjectTargetPointResolver = Callable[[str, str], tuple[float, float]]
 PositionsMatch = Callable[[tuple[float, float], tuple[float, float]], bool]
 UnitTargetSetter = Callable[[UnitState, tuple[float, float]], None]
 UnitSupplyCapacityResolver = Callable[[str], int]
+RouteServiceSecondsResolver = Callable[[str], float]
 LandingPadSecurityChecker = Callable[[LandingPadState], bool]
 RouteRefresher = Callable[[SupplyRouteState], None]
+UnitTransportCapabilityChecker = Callable[[str], bool]
 
 
 @dataclass
 class SupplyRouteManager:
     resource_order: Sequence[str] = SUPPLY_RESOURCE_ORDER
     convoy_unit_type_ids: frozenset[str] = DEFAULT_SUPPLY_CONVOY_UNIT_TYPE_IDS
+    can_unit_type_transport_supplies: UnitTransportCapabilityChecker | None = None
     routes: dict[str, SupplyRouteState] = field(default_factory=dict)
 
     def clear(self) -> None:
@@ -34,6 +37,8 @@ class SupplyRouteManager:
         return self.can_unit_type_create_convoy(unit.unit_type_id)
 
     def can_unit_type_create_convoy(self, unit_type_id: str) -> bool:
+        if self.can_unit_type_transport_supplies is not None:
+            return self.can_unit_type_transport_supplies(unit_type_id)
         return unit_type_id in self.convoy_unit_type_ids
 
     def create_route(
@@ -161,6 +166,9 @@ class SupplyRouteManager:
         self,
         route: SupplyRouteState,
         *,
+        elapsed_seconds: float = 0.0,
+        load_seconds: float = 0.0,
+        unload_seconds: float = 0.0,
         find_unit_by_id: UnitFinder,
         landing_pads: Mapping[str, LandingPadState],
         bases: Mapping[str, BaseState],
@@ -168,6 +176,8 @@ class SupplyRouteManager:
         positions_match: PositionsMatch,
         set_unit_target: UnitTargetSetter,
         unit_supply_capacity: UnitSupplyCapacityResolver,
+        unit_load_seconds: RouteServiceSecondsResolver | None = None,
+        unit_unload_seconds: RouteServiceSecondsResolver | None = None,
     ) -> None:
         unit = find_unit_by_id(route.unit_id)
         if unit is None:
@@ -178,6 +188,32 @@ class SupplyRouteManager:
             self.clear_route_for_unit(route.unit_id)
             return
 
+        if route.phase == "loading":
+            self.advance_route_loading(
+                route,
+                unit,
+                elapsed_seconds=elapsed_seconds,
+                landing_pads=landing_pads,
+                bases=bases,
+                object_target_point=object_target_point,
+                positions_match=positions_match,
+                set_unit_target=set_unit_target,
+                unit_supply_capacity=unit_supply_capacity,
+            )
+            return
+
+        if route.phase == "unloading":
+            self.advance_route_unloading(
+                route,
+                unit,
+                elapsed_seconds=elapsed_seconds,
+                bases=bases,
+                object_target_point=object_target_point,
+                positions_match=positions_match,
+                set_unit_target=set_unit_target,
+            )
+            return
+
         if unit.carried_supply_total(resource_order=self.resource_order) > 0:
             self.refresh_route_delivery(
                 route,
@@ -186,6 +222,8 @@ class SupplyRouteManager:
                 object_target_point=object_target_point,
                 positions_match=positions_match,
                 set_unit_target=set_unit_target,
+                unload_seconds=unload_seconds,
+                unit_unload_seconds=unit_unload_seconds,
             )
             return
 
@@ -198,6 +236,8 @@ class SupplyRouteManager:
             positions_match=positions_match,
             set_unit_target=set_unit_target,
             unit_supply_capacity=unit_supply_capacity,
+            load_seconds=load_seconds,
+            unit_load_seconds=unit_load_seconds,
         )
 
     def refresh_route_pickup(
@@ -211,12 +251,15 @@ class SupplyRouteManager:
         positions_match: PositionsMatch,
         set_unit_target: UnitTargetSetter,
         unit_supply_capacity: UnitSupplyCapacityResolver,
+        load_seconds: float = 0.0,
+        unit_load_seconds: RouteServiceSecondsResolver | None = None,
     ) -> None:
         pickup_target = object_target_point(route.source_object_id, unit.unit_type_id)
         if not positions_match(unit.position, pickup_target):
             if unit.target is None or not positions_match(unit.target, pickup_target):
                 set_unit_target(unit, pickup_target)
             route.phase = "to_pickup"
+            route.service_seconds_remaining = 0.0
             return
 
         source = landing_pads[route.source_object_id]
@@ -228,6 +271,96 @@ class SupplyRouteManager:
 
         if transfer_total <= 0:
             unit.clear_movement()
+            route.service_seconds_remaining = 0.0
+            route.phase = "awaiting_supply" if available_at_source <= 0 else "awaiting_capacity"
+            return
+
+        self.begin_route_service(
+            route,
+            unit,
+            phase="loading",
+            service_seconds=self.resolve_route_service_seconds(
+                unit.unit_type_id,
+                default_seconds=load_seconds,
+                unit_service_seconds=unit_load_seconds,
+            ),
+        )
+
+    def refresh_route_delivery(
+        self,
+        route: SupplyRouteState,
+        unit: UnitState,
+        *,
+        bases: Mapping[str, BaseState],
+        object_target_point: ObjectTargetPointResolver,
+        positions_match: PositionsMatch,
+        set_unit_target: UnitTargetSetter,
+        unload_seconds: float = 0.0,
+        unit_unload_seconds: RouteServiceSecondsResolver | None = None,
+    ) -> None:
+        dropoff_target = object_target_point(route.destination_object_id, unit.unit_type_id)
+        if not positions_match(unit.position, dropoff_target):
+            if unit.target is None or not positions_match(unit.target, dropoff_target):
+                set_unit_target(unit, dropoff_target)
+            route.phase = "to_dropoff"
+            route.service_seconds_remaining = 0.0
+            return
+
+        self.begin_route_service(
+            route,
+            unit,
+            phase="unloading",
+            service_seconds=self.resolve_route_service_seconds(
+                unit.unit_type_id,
+                default_seconds=unload_seconds,
+                unit_service_seconds=unit_unload_seconds,
+            ),
+        )
+
+    def begin_route_service(
+        self,
+        route: SupplyRouteState,
+        unit: UnitState,
+        *,
+        phase: str,
+        service_seconds: float,
+    ) -> None:
+        unit.clear_movement()
+        route.phase = phase
+        route.service_seconds_remaining = max(0.0, service_seconds)
+
+    def advance_route_loading(
+        self,
+        route: SupplyRouteState,
+        unit: UnitState,
+        *,
+        elapsed_seconds: float,
+        landing_pads: Mapping[str, LandingPadState],
+        bases: Mapping[str, BaseState],
+        object_target_point: ObjectTargetPointResolver,
+        positions_match: PositionsMatch,
+        set_unit_target: UnitTargetSetter,
+        unit_supply_capacity: UnitSupplyCapacityResolver,
+    ) -> None:
+        if not self.spend_route_service_time(route, elapsed_seconds=elapsed_seconds):
+            return
+
+        pickup_target = object_target_point(route.source_object_id, unit.unit_type_id)
+        if not positions_match(unit.position, pickup_target):
+            if unit.target is None or not positions_match(unit.target, pickup_target):
+                set_unit_target(unit, pickup_target)
+            route.phase = "to_pickup"
+            route.service_seconds_remaining = 0.0
+            return
+
+        source = landing_pads[route.source_object_id]
+        destination = bases[route.destination_object_id]
+        available_at_source = source.total_stored(resource_order=self.resource_order)
+        free_at_destination = destination.free_capacity(resource_order=self.resource_order)
+        unit_capacity = unit_supply_capacity(unit.unit_type_id)
+        transfer_total = min(unit_capacity, available_at_source, free_at_destination)
+
+        if transfer_total <= 0:
             route.phase = "awaiting_supply" if available_at_source <= 0 else "awaiting_capacity"
             return
 
@@ -239,22 +372,28 @@ class SupplyRouteManager:
         )
         set_unit_target(unit, object_target_point(route.destination_object_id, unit.unit_type_id))
         route.phase = "to_dropoff"
+        route.service_seconds_remaining = 0.0
 
-    def refresh_route_delivery(
+    def advance_route_unloading(
         self,
         route: SupplyRouteState,
         unit: UnitState,
         *,
+        elapsed_seconds: float,
         bases: Mapping[str, BaseState],
         object_target_point: ObjectTargetPointResolver,
         positions_match: PositionsMatch,
         set_unit_target: UnitTargetSetter,
     ) -> None:
+        if not self.spend_route_service_time(route, elapsed_seconds=elapsed_seconds):
+            return
+
         dropoff_target = object_target_point(route.destination_object_id, unit.unit_type_id)
         if not positions_match(unit.position, dropoff_target):
             if unit.target is None or not positions_match(unit.target, dropoff_target):
                 set_unit_target(unit, dropoff_target)
             route.phase = "to_dropoff"
+            route.service_seconds_remaining = 0.0
             return
 
         destination = bases[route.destination_object_id]
@@ -269,9 +408,25 @@ class SupplyRouteManager:
         )
         unloaded_total = sum(int(unloaded_resources.get(resource_id, 0)) for resource_id in self.resource_order)
         if unloaded_total < carried_total:
-            unit.clear_movement()
             route.phase = "awaiting_capacity"
+            route.service_seconds_remaining = 0.0
             return
 
         set_unit_target(unit, object_target_point(route.source_object_id, unit.unit_type_id))
         route.phase = "to_pickup"
+        route.service_seconds_remaining = 0.0
+
+    def spend_route_service_time(self, route: SupplyRouteState, *, elapsed_seconds: float) -> bool:
+        route.service_seconds_remaining = max(0.0, route.service_seconds_remaining - max(0.0, elapsed_seconds))
+        return route.service_seconds_remaining <= 0.0
+
+    def resolve_route_service_seconds(
+        self,
+        unit_type_id: str,
+        *,
+        default_seconds: float,
+        unit_service_seconds: RouteServiceSecondsResolver | None,
+    ) -> float:
+        if unit_service_seconds is None:
+            return max(0.0, default_seconds)
+        return max(0.0, unit_service_seconds(unit_type_id))
