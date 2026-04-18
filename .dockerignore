@@ -22,6 +22,8 @@ sca-report.txt
 sca-summary.md
 pytest-cache-files-*
 pytest-temp-run-*
+ci_tmp_*
+local-pytest-temp
 tmp*
 tmps*
 __pycache__

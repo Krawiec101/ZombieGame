@@ -10,3 +10,4 @@ class SupplyRouteState:
     source_object_id: str
     destination_object_id: str
     phase: str
+    service_seconds_remaining: float = 0.0
