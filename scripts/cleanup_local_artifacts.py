@@ -3,9 +3,12 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import subprocess
+import sys
 from collections.abc import Iterable
 from fnmatch import fnmatch
 from pathlib import Path
+from pathlib import PurePosixPath
 
 ROOT_LEVEL_DIRECTORIES = {
     ".mypy_cache",
@@ -15,6 +18,7 @@ ROOT_LEVEL_DIRECTORIES = {
     "mutants",
 }
 ROOT_LEVEL_DIRECTORY_PATTERNS = (
+    "cleanup-test-temp*",
     ".codex-*",
     ".tmp-*",
     "ci_tmp_*",
@@ -83,7 +87,44 @@ def collect_cleanup_targets(root: Path) -> list[Path]:
     return sorted(targets)
 
 
-def remove_targets(paths: Iterable[Path]) -> tuple[int, int, list[Path]]:
+def _try_docker_fallback_remove(root: Path, path: Path) -> bool:
+    docker_compose_file = root / "docker-compose.yml"
+    if not docker_compose_file.exists():
+        return False
+
+    try:
+        relative_path = path.relative_to(root)
+    except ValueError:
+        return False
+
+    container_path = PurePosixPath("/app", *relative_path.parts).as_posix()
+    cleanup_code = (
+        "from pathlib import Path; "
+        "import shutil, sys; "
+        "target = Path(sys.argv[1]); "
+        "shutil.rmtree(target) if target.is_dir() else target.unlink()"
+    )
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "run",
+            "--rm",
+            "app",
+            "python",
+            "-c",
+            cleanup_code,
+            container_path,
+        ],
+        cwd=root,
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0 and not path.exists()
+
+
+def remove_targets(paths: Iterable[Path], *, root: Path | None = None) -> tuple[int, int, list[Path]]:
     removed = 0
     missing = 0
     failed: list[Path] = []
@@ -96,7 +137,15 @@ def remove_targets(paths: Iterable[Path]) -> tuple[int, int, list[Path]]:
                 shutil.rmtree(path)
             else:
                 path.unlink()
-        except OSError:
+        except OSError as error:
+            if (
+                root is not None
+                and isinstance(error, PermissionError)
+                and sys.platform == "win32"
+                and _try_docker_fallback_remove(root, path)
+            ):
+                removed += 1
+                continue
             failed.append(path)
             continue
         removed += 1
@@ -136,7 +185,7 @@ def main() -> int:
         print(f"Matched {len(targets)} paths.")
         return 0
 
-    removed, missing, failed = remove_targets(targets)
+    removed, missing, failed = remove_targets(targets, root=root)
     print(f"Removed {removed} paths.")
     if missing:
         print(f"Skipped {missing} paths that disappeared during cleanup.")
@@ -144,6 +193,8 @@ def main() -> int:
         print(f"Skipped {len(failed)} paths due to access errors:")
         for path in failed:
             print(path.relative_to(root).as_posix())
+        if sys.platform == "win32":
+            print("Tip: on Windows, ACL-locked paths can remain even after a Docker retry and may require cleanup from an elevated shell.")
     return 0
 
 

@@ -33,5 +33,6 @@ sca-summary.md
 
 # Local temporary artifacts
 .codex-*/
+codex-pytest-work*/
 .tmp-*/
 pytest-temp-run-*/

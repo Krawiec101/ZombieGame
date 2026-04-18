@@ -6,6 +6,7 @@
 .coverage
 .docker-local
 .codex-*
+codex-pytest-work*
 .tmp-*
 .tmp-pytest-local
 htmlcov
@@ -23,7 +24,9 @@ sca-summary.md
 pytest-cache-files-*
 pytest-temp-run-*
 ci_tmp_*
+cleanup-test-temp*
 local-pytest-temp
+local-pytest-temp*
 tmp*
 tmps*
 __pycache__
