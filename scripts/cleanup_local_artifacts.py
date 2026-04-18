@@ -17,7 +17,11 @@ ROOT_LEVEL_DIRECTORIES = {
 ROOT_LEVEL_DIRECTORY_PATTERNS = (
     ".codex-*",
     ".tmp-*",
+    "ci_tmp_*",
+    "local-pytest-temp*",
+    "pytest-cache-files-*",
     "pytest-temp-run-*",
+    "tmp*",
 )
 ROOT_LEVEL_FILES = {
     ".coverage",
@@ -79,19 +83,24 @@ def collect_cleanup_targets(root: Path) -> list[Path]:
     return sorted(targets)
 
 
-def remove_targets(paths: Iterable[Path]) -> tuple[int, int]:
+def remove_targets(paths: Iterable[Path]) -> tuple[int, int, list[Path]]:
     removed = 0
     missing = 0
+    failed: list[Path] = []
     for path in paths:
         if not path.exists():
             missing += 1
             continue
-        if path.is_dir():
-            shutil.rmtree(path)
-        else:
-            path.unlink()
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        except OSError:
+            failed.append(path)
+            continue
         removed += 1
-    return removed, missing
+    return removed, missing, failed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -127,10 +136,14 @@ def main() -> int:
         print(f"Matched {len(targets)} paths.")
         return 0
 
-    removed, missing = remove_targets(targets)
+    removed, missing, failed = remove_targets(targets)
     print(f"Removed {removed} paths.")
     if missing:
         print(f"Skipped {missing} paths that disappeared during cleanup.")
+    if failed:
+        print(f"Skipped {len(failed)} paths due to access errors:")
+        for path in failed:
+            print(path.relative_to(root).as_posix())
     return 0
 
 

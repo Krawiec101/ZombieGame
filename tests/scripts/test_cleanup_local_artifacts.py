@@ -30,7 +30,11 @@ def test_collect_cleanup_targets_finds_known_artifacts_and_skips_virtualenv(tmp_
         tmp_path / ".pytest_cache",
         tmp_path / ".ruff_cache",
         tmp_path / ".tmp-pip-audit",
+        tmp_path / "ci_tmp_pytest",
+        tmp_path / "local-pytest-temp",
+        tmp_path / "pytest-cache-files-abc123",
         tmp_path / "pytest-temp-run-1",
+        tmp_path / "tmp3cgk2n_2",
     ]
     for path in tracked_paths:
         path.mkdir(parents=True)
@@ -49,7 +53,11 @@ def test_collect_cleanup_targets_finds_known_artifacts_and_skips_virtualenv(tmp_
     assert ".pytest_cache" in relative_targets
     assert ".ruff_cache" in relative_targets
     assert ".tmp-pip-audit" in relative_targets
+    assert "ci_tmp_pytest" in relative_targets
+    assert "local-pytest-temp" in relative_targets
+    assert "pytest-cache-files-abc123" in relative_targets
     assert "pytest-temp-run-1" in relative_targets
+    assert "tmp3cgk2n_2" in relative_targets
     assert "coverage.xml" in relative_targets
     assert "mutmut-results.txt" in relative_targets
     assert ".venv/Lib/site-packages/__pycache__" not in relative_targets
@@ -77,3 +85,26 @@ def test_cli_dry_run_lists_targets_without_deleting_them(tmp_path: Path) -> None
     assert "coverage.xml" in result.stdout
     assert (tmp_path / "src" / "__pycache__").exists()
     assert (tmp_path / "coverage.xml").exists()
+
+
+def test_remove_targets_skips_paths_with_access_errors(monkeypatch, tmp_path: Path) -> None:
+    removable = tmp_path / "coverage.xml"
+    blocked = tmp_path / ".pytest_cache"
+    removable.write_text("", encoding="utf-8")
+    blocked.mkdir()
+
+    original_rmtree = CLEANUP.shutil.rmtree
+
+    def fake_rmtree(path: Path) -> None:
+        if Path(path) == blocked:
+            raise PermissionError("denied")
+        original_rmtree(path)
+
+    monkeypatch.setattr(CLEANUP.shutil, "rmtree", fake_rmtree)
+
+    removed, missing, failed = CLEANUP.remove_targets([removable, blocked])
+
+    assert removed == 1
+    assert missing == 0
+    assert failed == [blocked]
+    assert blocked.exists()
