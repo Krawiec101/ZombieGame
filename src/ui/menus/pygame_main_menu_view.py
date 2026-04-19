@@ -10,8 +10,8 @@ from contracts.events import (
     GameFrameSyncRequested,
     GameLeftClickRequested,
     GameRightClickRequested,
-    GameSupplyRouteRequested,
     GameStateSynced,
+    GameSupplyRouteRequested,
     LoadGameFlowRouted,
     LoadGameRequested,
     NewGameFlowRouted,
@@ -20,7 +20,6 @@ from contracts.events import (
 )
 from ui.game_views.pygame_game_view import PygameGameView
 from ui.i18n import text
-
 
 _MENU_OPTION_LABEL_KEYS = {
     "1": "main_menu.option.new_game",

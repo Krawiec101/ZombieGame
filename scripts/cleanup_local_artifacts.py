@@ -37,6 +37,8 @@ ROOT_LEVEL_FILES = {
     "lint-report.txt",
     "lint-summary.md",
     "mutation-summary.md",
+    "mypy-report.txt",
+    "mypy-summary.md",
     "mutmut-results.txt",
     "pytest-coverage.txt",
     "sca-report.txt",

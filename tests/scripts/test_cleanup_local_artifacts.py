@@ -59,6 +59,7 @@ def test_collect_cleanup_targets_finds_known_artifacts_and_skips_virtualenv() ->
             path.mkdir(parents=True)
 
         (tmp_path / "coverage.xml").write_text("", encoding="utf-8")
+        (tmp_path / "mypy-report.txt").write_text("", encoding="utf-8")
         (tmp_path / "mutmut-results.txt").write_text("", encoding="utf-8")
 
         ignored_path = tmp_path / ".venv" / "Lib" / "site-packages" / "__pycache__"
@@ -79,6 +80,7 @@ def test_collect_cleanup_targets_finds_known_artifacts_and_skips_virtualenv() ->
         assert "pytest-temp-run-1" in relative_targets
         assert "tmp3cgk2n_2" in relative_targets
         assert "coverage.xml" in relative_targets
+        assert "mypy-report.txt" in relative_targets
         assert "mutmut-results.txt" in relative_targets
         assert ".venv/Lib/site-packages/__pycache__" not in relative_targets
 

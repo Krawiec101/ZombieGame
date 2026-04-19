@@ -3,7 +3,11 @@ from __future__ import annotations
 from app.application_loop import run_main_menu_loop
 from app.ui_event_handler import (
     handle_ui_event as _handle_ui_event,
+)
+from app.ui_event_handler import (
     should_keep_running_after as _route_domain_event,
+)
+from app.ui_event_handler import (
     sync_game_state as _sync_game_state_impl,
 )
 from contracts.main_menu_view import MainMenuView

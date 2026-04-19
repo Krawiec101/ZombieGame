@@ -12,8 +12,8 @@ from contracts.events import (
     GameFrameSyncRequested,
     GameLeftClickRequested,
     GameRightClickRequested,
-    GameSupplyRouteRequested,
     GameStateSynced,
+    GameSupplyRouteRequested,
     LoadGameFlowRouted,
     LoadGameRequested,
     NewGameFlowRouted,
@@ -73,7 +73,7 @@ class _FakeFontSurface:
     def get_height(self) -> int:
         return 20
 
-    def get_rect(self, *, topleft: tuple[int, int]) -> "_FakeRect":
+    def get_rect(self, *, topleft: tuple[int, int]) -> _FakeRect:
         return _FakeRect(topleft[0], topleft[1], self.get_width(), self.get_height())
 
 

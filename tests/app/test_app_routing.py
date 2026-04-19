@@ -5,8 +5,8 @@ from dataclasses import dataclass
 import pytest
 
 import app.application_loop as application_loop_module
-from app import app as app_module
 import app.ui_event_handler as ui_event_handler_module
+from app import app as app_module
 from contracts.events import (
     DomainEvent,
     ExitFlowRouted,
@@ -14,8 +14,8 @@ from contracts.events import (
     GameFrameSyncRequested,
     GameLeftClickRequested,
     GameRightClickRequested,
-    GameSupplyRouteRequested,
     GameStateSynced,
+    GameSupplyRouteRequested,
     LoadGameFlowRouted,
     LoadGameRequested,
     NewGameFlowRouted,

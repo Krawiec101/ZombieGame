@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import json
 
-from core.scenario_config import load_default_scenario_config, load_scenario_config
+from core.scenario_config import (
+    _select_mission_definition,
+    _select_stage_definition,
+    load_default_scenario_config,
+    load_scenario_config,
+)
 
 
 def test_default_scenario_config_contains_map_layout_and_story_data() -> None:
@@ -255,3 +260,146 @@ def test_scenario_config_uses_empty_defaults_when_sections_have_wrong_shape(monk
     assert scenario.mission_objectives == ()
     assert scenario.mission_reports == ()
     assert scenario.stage_events == ()
+
+
+def test_load_default_scenario_config_forwards_explicit_selector_arguments(monkeypatch) -> None:
+    recorded_call: dict[str, object] = {}
+
+    def fake_load_scenario_config(path, *, mission_id=None, stage_id=None):
+        recorded_call.update(
+            {
+                "path": path,
+                "mission_id": mission_id,
+                "stage_id": stage_id,
+            }
+        )
+        return "sentinel"
+
+    monkeypatch.setattr("core.scenario_config.load_scenario_config", fake_load_scenario_config)
+
+    result = load_default_scenario_config(
+        mission_id="mission_2_reach_relay",
+        stage_id="stage_2",
+    )
+
+    assert result == "sentinel"
+    assert recorded_call["path"].name == "default_scenario.json"
+    assert recorded_call["mission_id"] == "mission_2_reach_relay"
+    assert recorded_call["stage_id"] == "stage_2"
+
+
+def test_scenario_config_uses_configured_default_mission_when_no_selector_is_passed(monkeypatch) -> None:
+    scenario = _load_scenario_from_raw_data(
+        monkeypatch,
+        {
+            "default_mission_id": "mission_bravo",
+            "missions": [
+                {
+                    "mission_id": "mission_alpha",
+                    "default_stage_id": "stage_1",
+                    "stages": [{"stage_id": "stage_1"}],
+                },
+                {
+                    "mission_id": "mission_bravo",
+                    "default_stage_id": "stage_2",
+                    "stages": [{"stage_id": "stage_2"}],
+                },
+            ],
+        },
+    )
+
+    assert scenario.default_mission_id == "mission_bravo"
+    assert scenario.mission_id == "mission_bravo"
+    assert scenario.default_stage_id == "stage_2"
+    assert scenario.stage_id == "stage_2"
+
+
+def test_scenario_config_uses_configured_default_stage_when_no_stage_selector_is_passed(monkeypatch) -> None:
+    scenario = _load_scenario_from_raw_data(
+        monkeypatch,
+        {
+            "default_mission_id": "mission_alpha",
+            "missions": [
+                {
+                    "mission_id": "mission_alpha",
+                    "default_stage_id": "stage_2",
+                    "stages": [
+                        {"stage_id": "stage_1", "events": [{"event_id": "intro"}]},
+                        {"stage_id": "stage_2", "events": [{"event_id": "counterattack"}]},
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert scenario.available_stage_ids == ("stage_1", "stage_2")
+    assert scenario.default_stage_id == "stage_2"
+    assert scenario.stage_id == "stage_2"
+    assert scenario.stage_events == ({"event_id": "counterattack"},)
+
+
+def test_scenario_config_keeps_missing_ids_as_empty_strings_in_available_lists(monkeypatch) -> None:
+    scenario = _load_scenario_from_raw_data(
+        monkeypatch,
+        {
+            "missions": [
+                {
+                    "stages": [
+                        {},
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert scenario.available_mission_ids == ("",)
+    assert scenario.default_mission_id == ""
+    assert scenario.mission_id == ""
+    assert scenario.available_stage_ids == ("",)
+    assert scenario.default_stage_id == ""
+    assert scenario.stage_id == ""
+
+
+def test_scenario_config_uses_twenty_kilometers_when_map_width_is_missing(monkeypatch) -> None:
+    scenario = _load_scenario_from_raw_data(
+        monkeypatch,
+        {
+            "map": {},
+        },
+    )
+
+    assert scenario.map_width_km == 20.0
+
+
+def test_select_mission_definition_distinguishes_missing_id_from_literal_none_and_xxxx() -> None:
+    mission_definitions = (
+        {"title": "missing-id"},
+        {"mission_id": "None", "title": "literal-none"},
+        {"mission_id": "XXXX", "title": "literal-xxxx"},
+    )
+
+    assert (
+        _select_mission_definition(mission_definitions, mission_id="None")["title"]
+        == "literal-none"
+    )
+    assert (
+        _select_mission_definition(mission_definitions, mission_id="XXXX")["title"]
+        == "literal-xxxx"
+    )
+
+
+def test_select_stage_definition_distinguishes_missing_id_from_literal_none_and_xxxx() -> None:
+    stage_definitions = (
+        {"label": "missing-id"},
+        {"stage_id": "None", "label": "literal-none"},
+        {"stage_id": "XXXX", "label": "literal-xxxx"},
+    )
+
+    assert (
+        _select_stage_definition(stage_definitions, stage_id="None")["label"]
+        == "literal-none"
+    )
+    assert (
+        _select_stage_definition(stage_definitions, stage_id="XXXX")["label"]
+        == "literal-xxxx"
+    )
