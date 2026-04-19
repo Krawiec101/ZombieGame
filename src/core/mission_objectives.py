@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Mapping, Sequence
 
 from core.scenario_config import load_default_scenario_config
+
+type Bounds = tuple[int, int, int, int]
 
 
 @dataclass(frozen=True)
@@ -65,9 +67,9 @@ class MissionObjectivesEvaluator:
             rule.objective_id: bool(current_status.get(rule.objective_id, False))
             for rule in self._rules
         }
-        object_bounds_by_id = {  # pragma: no mutate
-            str(map_object["id"]): tuple(map_object["bounds"]) for map_object in map_objects if "bounds" in map_object
-        }
+        object_bounds_by_id: dict[str, object] = {}  # pragma: no mutate
+        for map_object in map_objects:
+            object_bounds_by_id[str(map_object.get("id", ""))] = map_object.get("bounds")
 
         for rule in self._rules:
             if statuses[rule.objective_id]:
@@ -110,13 +112,13 @@ class MissionObjectivesEvaluator:
         units: Sequence[dict[str, object]],
         required_unit_type_id: str,
         target_object_id: str,
-        object_bounds_by_id: Mapping[str, tuple[object, ...]],
+        object_bounds_by_id: Mapping[str, object],
     ) -> bool:
-        bounds = object_bounds_by_id.get(target_object_id)
-        if not bounds or len(bounds) != 4:
+        bounds = _coerce_bounds(object_bounds_by_id.get(target_object_id))
+        if bounds is None:
             return False
 
-        left, top, right, bottom = (int(bounds[0]), int(bounds[1]), int(bounds[2]), int(bounds[3]))
+        left, top, right, bottom = bounds
         for unit in units:
             unit_type_id = str(unit.get("unit_type_id", ""))
             if unit_type_id != required_unit_type_id:
@@ -137,13 +139,13 @@ class MissionObjectivesEvaluator:
         *,
         target_object_id: str,
         enemy_groups: Sequence[dict[str, object]],
-        object_bounds_by_id: Mapping[str, tuple[object, ...]],
+        object_bounds_by_id: Mapping[str, object],
     ) -> bool:
-        bounds = object_bounds_by_id.get(target_object_id)
-        if not bounds or len(bounds) != 4:
+        bounds = _coerce_bounds(object_bounds_by_id.get(target_object_id))
+        if bounds is None:
             return False
 
-        left, top, right, bottom = (int(bounds[0]), int(bounds[1]), int(bounds[2]), int(bounds[3]))
+        left, top, right, bottom = bounds
         for enemy_group in enemy_groups:
             position = enemy_group.get("position")
             if not isinstance(position, (tuple, list)) or len(position) < 2:
@@ -173,3 +175,12 @@ class MissionObjectivesEvaluator:
 
 def create_default_mission_objectives_evaluator() -> MissionObjectivesEvaluator:
     return MissionObjectivesEvaluator(DEFAULT_MISSION_OBJECTIVE_RULES)
+
+
+def _coerce_bounds(value: object) -> Bounds | None:
+    if not isinstance(value, (tuple, list)) or len(value) != 4:
+        return None
+    try:
+        return (int(value[0]), int(value[1]), int(value[2]), int(value[3]))
+    except (TypeError, ValueError):
+        return None

@@ -192,13 +192,13 @@ class PygameGameView:
 
         hovered_object = self._find_hovered_map_object()
         if hovered_object is not None:
-            tooltip = self._tooltip_content_for_map_object(hovered_object)
-            if tooltip is not None:
+            object_tooltip = self._tooltip_content_for_map_object(hovered_object)
+            if object_tooltip is not None:
                 self._draw_object_tooltip(
                     target_rect=self._rect_from_bounds(hovered_object.bounds),
-                    title=tooltip["title"],
-                    description=tooltip["description"],
-                    detail_lines=tooltip["detail_lines"],
+                    title=object_tooltip["title"],
+                    description=object_tooltip["description"],
+                    detail_lines=object_tooltip["detail_lines"],
                 )
 
     def _draw_map_area(self) -> Any:
@@ -485,7 +485,7 @@ class PygameGameView:
         if selected_unit is None:
             return False
         unit_rect = self._get_unit_rect(selected_unit)
-        return unit_rect.collidepoint(position)
+        return bool(unit_rect.collidepoint(position))
 
     def map_object_at(self, position: tuple[int, int]) -> MapObjectSnapshot | None:
         for map_object in self._map_objects:
@@ -764,7 +764,10 @@ class PygameGameView:
         if not landing_pad.is_secured:
             return text("game.map.object.landing_pad.status.unsecured")
 
-        transport_status_key = _LANDING_PAD_TRANSPORT_STATUS_TEXT_KEYS.get(landing_pad.active_transport_phase)
+        transport_phase = landing_pad.active_transport_phase
+        transport_status_key = (
+            _LANDING_PAD_TRANSPORT_STATUS_TEXT_KEYS.get(transport_phase) if transport_phase is not None else None
+        )
         if transport_status_key is not None:
             return text(
                 transport_status_key,

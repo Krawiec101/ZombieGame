@@ -9,8 +9,8 @@ from typing import Any
 
 from contracts.game_state import (
     BaseSnapshot,
-    CombatSnapshot,
     CombatNotificationSnapshot,
+    CombatSnapshot,
     GameStateSnapshot,
     LandingPadResourceSnapshot,
     LandingPadSnapshot,
@@ -25,11 +25,15 @@ from contracts.game_state import (
     UnitSnapshot,
     ZombieGroupSnapshot,
 )
+from core.mission_objectives import (
+    MissionObjectivesEvaluator,
+    create_default_mission_objectives_evaluator,
+)
 from core.model.buildings import (
+    SUPPLY_RESOURCE_ORDER,
     BaseState,
     LandingPadState,
     LandingPadTypeSpec,
-    SUPPLY_RESOURCE_ORDER,
     SupplyRouteState,
     SupplyTransportState,
     SupplyTransportTypeSpec,
@@ -41,10 +45,6 @@ from core.model.units import (
     ReinforcementTemplate,
     UnitState,
     UnitTypeSpec,
-)
-from core.mission_objectives import (
-    MissionObjectivesEvaluator,
-    create_default_mission_objectives_evaluator,
 )
 from core.scenario_config import load_default_scenario_config
 from core.supply_route_manager import SupplyRouteManager
@@ -1068,12 +1068,15 @@ class GameSession:
                 continue
 
             speed_px_per_tick = self._movement_pixels_per_tick(unit.unit_type_id)
+            def clamp_position(
+                position: tuple[float, float],
+                unit_type_id: str = unit.unit_type_id,
+            ) -> tuple[float, float]:
+                return self._clamp_point_to_map(position, unit_type_id=unit_type_id)
+
             unit.advance_towards_target(
                 speed_px_per_tick=speed_px_per_tick,
-                clamp_position=lambda position, active_unit=unit: self._clamp_point_to_map(
-                    position,
-                    unit_type_id=active_unit.unit_type_id,
-                ),
+                clamp_position=clamp_position,
             )
 
     def _start_combat(self, unit: UnitState, enemy_group: ZombieGroupState) -> None:

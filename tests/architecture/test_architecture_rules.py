@@ -3,8 +3,8 @@ from __future__ import annotations
 import ast
 import inspect
 import re
-from typing import get_type_hints
 from pathlib import Path
+from typing import get_type_hints
 
 from pytestarch import Rule, get_evaluable_architecture
 

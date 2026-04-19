@@ -6,6 +6,7 @@ from core.mission_objectives import (
     DEFAULT_MISSION_OBJECTIVE_RULES,
     MissionObjectiveRule,
     MissionObjectivesEvaluator,
+    _coerce_bounds,
     _load_default_mission_objective_rules,
     create_default_mission_objectives_evaluator,
 )
@@ -554,3 +555,113 @@ def test_supply_route_established_returns_false_when_no_route_matches() -> None:
         )
         is False
     )
+
+
+def test_unit_on_object_ignores_unrelated_map_object_with_non_numeric_bounds() -> None:
+    evaluator = MissionObjectivesEvaluator(
+        [
+            MissionObjectiveRule(
+                objective_id="reach_pad",
+                description_key="objective.reach_pad",
+                required_unit_type_id="mechanized_squad",
+                target_object_id="landing_pad",
+            ),
+        ]
+    )
+
+    statuses = evaluator.evaluate(
+        units=[{"unit_type_id": "mechanized_squad", "position": (150.0, 230.0)}],
+        map_objects=[
+            {"id": "noise", "bounds": ["bad", 0, 1, 1]},
+            {"id": "landing_pad", "bounds": (100, 200, 180, 260)},
+        ],
+        current_status={"reach_pad": False},
+    )
+
+    assert statuses["reach_pad"] is True
+
+
+def test_load_default_mission_objective_rules_preserves_explicit_fields_and_empty_defaults(monkeypatch) -> None:
+    class ScenarioStub:
+        mission_objectives = (
+            {
+                "objective_id": "reach_relay",
+                "description_key": "objective.reach_relay",
+                "required_unit_type_id": "engineer_team",
+                "target_object_id": "relay",
+            },
+            {},
+        )
+
+    monkeypatch.setattr(
+        "core.mission_objectives.load_default_scenario_config",
+        lambda: ScenarioStub(),
+    )
+
+    assert _load_default_mission_objective_rules() == (
+        MissionObjectiveRule(
+            objective_id="reach_relay",
+            description_key="objective.reach_relay",
+            required_unit_type_id="engineer_team",
+            target_object_id="relay",
+        ),
+        MissionObjectiveRule(
+            objective_id="",
+            description_key="",
+            required_unit_type_id="",
+            target_object_id="",
+        ),
+    )
+
+
+def test_evaluator_distinguishes_missing_map_object_id_from_literal_none() -> None:
+    evaluator = MissionObjectivesEvaluator(
+        [
+            MissionObjectiveRule(
+                objective_id="reach_none",
+                description_key="objective.reach_none",
+                required_unit_type_id="mechanized_squad",
+                target_object_id="None",
+            ),
+        ]
+    )
+
+    statuses = evaluator.evaluate(
+        units=[{"unit_type_id": "mechanized_squad", "position": (150.0, 150.0)}],
+        map_objects=[
+            {"id": "None", "bounds": (0, 0, 10, 10)},
+            {"bounds": (100, 100, 200, 200)},
+        ],
+        current_status={"reach_none": False},
+    )
+
+    assert statuses["reach_none"] is False
+
+
+def test_evaluator_distinguishes_missing_map_object_id_from_literal_xxxx() -> None:
+    evaluator = MissionObjectivesEvaluator(
+        [
+            MissionObjectiveRule(
+                objective_id="reach_xxxx",
+                description_key="objective.reach_xxxx",
+                required_unit_type_id="mechanized_squad",
+                target_object_id="XXXX",
+            ),
+        ]
+    )
+
+    statuses = evaluator.evaluate(
+        units=[{"unit_type_id": "mechanized_squad", "position": (350.0, 350.0)}],
+        map_objects=[
+            {"id": "XXXX", "bounds": (0, 0, 10, 10)},
+            {"bounds": (300, 300, 400, 400)},
+        ],
+        current_status={"reach_xxxx": False},
+    )
+
+    assert statuses["reach_xxxx"] is False
+
+
+def test_coerce_bounds_returns_none_for_non_numeric_values() -> None:
+    assert _coerce_bounds(["bad", 0, 1, 1]) is None
+    assert _coerce_bounds((100, "200", 180.8, 260)) == (100, 200, 180, 260)

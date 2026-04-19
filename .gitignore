@@ -27,6 +27,8 @@ coverage-summary.md
 lint-report.txt
 lint-summary.md
 mutation-summary.md
+mypy-report.txt
+mypy-summary.md
 pytest-coverage.txt
 sca-report.txt
 sca-summary.md

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 SUPPLY_RESOURCE_ORDER = ("fuel", "mre", "ammo")
 
 

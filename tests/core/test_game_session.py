@@ -16,24 +16,24 @@ from contracts.game_state import (
     RoadSnapshot,
     SupplyRouteSnapshot,
     SupplyTransportSnapshot,
-    ZombieGroupSnapshot,
     UnitSnapshot,
+    ZombieGroupSnapshot,
 )
 from core.game_session import (
     MAIN_OBJECTIVE_REPORT_RULES,
     REINFORCEMENT_TEMPLATES,
     SUPPLY_TRANSPORT_TYPE_SPECS,
+    UNIT_TYPE_SPECS,
     BaseState,
-    CombatState,
     CombatNotificationState,
+    CombatState,
     CommanderState,
+    LandingPadState,
     MainObjectiveReportRule,
     ReinforcementTemplate,
-    SupplyTransportTypeSpec,
-    UNIT_TYPE_SPECS,
-    LandingPadState,
     SupplyRouteState,
     SupplyTransportState,
+    SupplyTransportTypeSpec,
     UnitState,
     ZombieGroupState,
     _commander_state_from_config,
@@ -4201,3 +4201,92 @@ def test_set_unit_target_assigns_tuple_path_for_non_matching_destination() -> No
 
     assert unit.target == (140.0, 100.0)
     assert unit.path == ((140.0, 100.0),)
+
+
+def test_reinforcement_templates_from_config_uses_empty_commander_and_zero_personnel_defaults(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.game_session._DEFAULT_SCENARIO",
+        _scenario_config_for_game_session_tests(
+            reinforcements=(
+                {
+                    "unit_id": "echo",
+                    "unit_type_id": "infantry_squad",
+                    "name": "Echo",
+                },
+            ),
+        ),
+    )
+
+    assert _reinforcement_templates_from_config() == (
+        ReinforcementTemplate(
+            unit_id="echo",
+            unit_type_id="infantry_squad",
+            name="Echo",
+            commander=CommanderState(name="", experience_level="basic"),
+            experience_level="basic",
+            personnel=0,
+            morale=0,
+            ammo=0,
+            rations=0,
+            fuel=0,
+        ),
+    )
+
+
+def test_create_default_game_session_initializes_empty_roads_collection() -> None:
+    session = create_default_game_session()
+
+    assert session._roads == []
+
+
+def test_reset_clears_enemy_groups_and_mission_reports_collections() -> None:
+    session = create_default_game_session()
+    session._enemy_groups = [
+        ZombieGroupState(group_id="z1", position=(10.0, 10.0), name="patrol", personnel=4)
+    ]
+    session._mission_reports = [
+        MissionReportSnapshot(
+            report_id="report",
+            title_key="title",
+            message_key="message",
+        )
+    ]
+
+    session.reset()
+
+    assert session._enemy_groups == []
+    assert session._mission_reports == []
+
+
+def test_update_map_dimensions_retargets_units_with_supply_route_aware_road_mode_after_resize() -> None:
+    session = create_default_game_session()
+    session._map_size = (100, 100)
+    session._map_objects = [{"id": "hq", "bounds": (0, 0, 10, 10)}]
+    session._roads = [{"id": "road", "points": ((0.0, 0.0), (10.0, 10.0))}]
+    session._units_initialized = True
+    session._units = [
+        UnitState(
+            unit_id="u1",
+            unit_type_id="mechanized_squad",
+            position=(25.0, 25.0),
+            target=(75.0, 75.0),
+        )
+    ]
+
+    recorded_road_modes: list[str | None] = []
+    session._build_map_objects = lambda width, height: session._map_objects  # type: ignore[method-assign]
+    session._build_roads = lambda: session._roads  # type: ignore[method-assign]
+    session._sync_bases_to_map_objects = lambda: None  # type: ignore[method-assign]
+    session._sync_landing_pads_to_map_objects = lambda: None  # type: ignore[method-assign]
+    session._clamp_point_to_map = lambda position, *, unit_type_id: position  # type: ignore[method-assign]
+    session._unit_has_supply_route = lambda unit_id: unit_id == "u1"  # type: ignore[method-assign]
+    session._road_mode_for_unit = lambda unit_type_id: "off"  # type: ignore[method-assign]
+    session._set_unit_target = (  # type: ignore[method-assign]
+        lambda unit, target, *, road_mode: recorded_road_modes.append(road_mode)
+    )
+    session._clamp_enemy_groups_to_map = lambda: None  # type: ignore[method-assign]
+    session._refresh_supply_route_targets = lambda: None  # type: ignore[method-assign]
+
+    session.update_map_dimensions(width=120, height=120)
+
+    assert recorded_road_modes == ["only"]

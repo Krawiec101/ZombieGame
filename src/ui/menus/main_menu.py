@@ -5,7 +5,6 @@ import os
 from contracts.main_menu_view import MainMenuView
 from ui.menus.console_main_menu_view import ConsoleMainMenuView
 
-
 _USE_CONSOLE_VALUES = {"1", "true", "yes", "on"}
 
 

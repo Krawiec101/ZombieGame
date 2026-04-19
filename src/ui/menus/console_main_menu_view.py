@@ -12,7 +12,6 @@ from contracts.events import (
 )
 from ui.i18n import text
 
-
 _MENU_OPTION_LABEL_KEYS = {
     "1": "main_menu.option.new_game",
     "2": "main_menu.option.load_game",

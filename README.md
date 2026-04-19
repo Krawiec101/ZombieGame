@@ -70,16 +70,24 @@ $env:GAME_LANGUAGE='pl'; .\.venv\Scripts\python.exe -m src.main
 
 ## Testy
 
-Testy nie wymagaja `pygame`:
+Preferowany lokalny sposob odtwarzania bramek CI to Docker:
 
-```bash
-.\.venv\Scripts\python.exe -m pytest -q
+```powershell
+.\scripts\ci\local_check.ps1
 ```
 
-Tylko testy architektury (PyTestArch):
+Jesli chcesz odpalic pojedynczy krok lokalnie, uzywaj tych samych komend co CI:
 
 ```bash
-.\.venv\Scripts\python.exe -m pytest -q tests/architecture
+docker compose build
+docker compose run --rm sca
+docker compose run --rm lint
+docker compose run --rm typecheck
+docker compose run --rm app pytest tests --ignore=mutants --ignore=tests/architecture --cov=src --cov-fail-under=95 --cov-report=term-missing --cov-report=xml:coverage.xml
+docker compose run --rm app python scripts/ci/crap_gate.py --coverage-xml coverage.xml --source-dir src --summary-md crap-summary.md
+docker compose run --rm app pytest -q tests/architecture
+docker compose run --rm app mutmut run
+docker compose run --rm app sh -lc "mutmut results --all true"
 ```
 
 ## Czyszczenie lokalnych artefaktow
@@ -99,6 +107,9 @@ Tryb podgladu bez usuwania:
 ## Test coverage (CI)
 
 Pipeline CI uruchamia `pytest` z `pytest-cov` dla testow funkcjonalnych/jednostkowych oraz osobny krok dla testow architektury (`tests/architecture`, PyTestArch). Podsumowania sa publikowane w zakladce `Checks` (GitHub Step Summary).
+
+Globalna bramka coverage jest twarda:
+- wymagane pokrycie: `>= 95%`
 
 Po kroku coverage dziala tez bramka CRAP (Change Risk Anti-Patterns), liczona na podstawie `coverage.xml` i cyclomatic complexity z `radon`.
 Progi startowe w CI:
@@ -130,7 +141,7 @@ W CI jest ustawiona bramka jakosci mutacji:
 Projekt korzysta z `pip-audit` do skanowania podatnosci w zaleznosciach (`Software Composition Analysis`):
 
 ```bash
-python -m pip_audit -r requirements.txt
+docker compose run --rm sca
 ```
 
 W CI/CD skan uruchamia sie automatycznie przed testami. Wykrycie podatnosci powoduje blad pipeline.
@@ -140,10 +151,26 @@ W CI/CD skan uruchamia sie automatycznie przed testami. Wykrycie podatnosci powo
 Projekt korzysta z `ruff` do statycznej analizy kodu:
 
 ```bash
-python -m ruff check src tests
+docker compose run --rm lint
 ```
 
 W CI/CD linter uruchamia sie automatycznie przed testami. Wykrycie problemow powoduje blad pipeline.
+
+Aktualnie `ruff` sprawdza m.in.:
+- bledy i oczywiste problemy (`E`, `F`)
+- typowe pulapki z `flake8-bugbear` (`B`)
+- porzadek importow (`I`)
+- mozliwe uproszczenia skladni i nowsza skladnie Pythona (`UP`)
+
+## Type checking
+
+Projekt korzysta z `mypy` do statycznego sprawdzania typow w kodzie produkcyjnym:
+
+```bash
+docker compose run --rm typecheck
+```
+
+W CI/CD type-checking uruchamia sie automatycznie przed testami.
 
 ## Wymagania
 
@@ -160,4 +187,5 @@ docker compose run --rm app pytest
 docker compose run --rm app mutmut run
 docker compose run --rm sca
 docker compose run --rm lint
+docker compose run --rm typecheck
 ```

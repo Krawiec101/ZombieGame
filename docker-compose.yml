@@ -36,6 +36,18 @@ services:
     command: >
       sh -lc "ruff check src tests"
 
+  typecheck:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - ./:/app
+    command: >
+      sh -lc "mypy src"
+
   jupyter:
     build:
       context: .

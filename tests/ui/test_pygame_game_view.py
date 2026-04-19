@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import ui.game_views.pygame_game_view as game_view_module
 from contracts.game_state import (
     BaseSnapshot,
     CombatNotificationSnapshot,
@@ -22,7 +23,6 @@ from contracts.game_state import (
     UnitSnapshot,
     ZombieGroupSnapshot,
 )
-import ui.game_views.pygame_game_view as game_view_module
 
 
 class _FakeRect:

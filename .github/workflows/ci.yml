@@ -79,9 +79,39 @@ jobs:
             exit "$LINT_EXIT"
           fi
 
+      - name: Run static type checks (mypy)
+        run: |
+          set +e
+          docker compose run --rm typecheck > mypy-report.txt 2>&1
+          MYPY_EXIT=$?
+          set -e
+
+          cat mypy-report.txt
+
+          {
+            echo "## Static type checks (mypy)"
+            echo ""
+            if [ "$MYPY_EXIT" -eq 0 ]; then
+              echo "Status: **PASS**"
+            else
+              echo "Status: **FAIL**"
+            fi
+            echo ""
+            echo '```'
+            cat mypy-report.txt
+            echo '```'
+          } > mypy-summary.md
+
+          cat mypy-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$MYPY_EXIT" -ne 0 ]; then
+            echo "FAIL: type issues found by mypy"
+            exit "$MYPY_EXIT"
+          fi
+
       - name: Run tests with coverage
         run: |
-          docker compose run --rm app pytest tests --ignore=mutants --ignore=tests/architecture --cov=src --cov-report=term-missing --cov-report=xml:coverage.xml > pytest-coverage.txt
+          docker compose run --rm app pytest tests --ignore=mutants --ignore=tests/architecture --cov=src --cov-fail-under=95 --cov-report=term-missing --cov-report=xml:coverage.xml > pytest-coverage.txt
           cat pytest-coverage.txt
 
           COVERAGE_LINE=$(grep -E "^TOTAL" pytest-coverage.txt | tail -n 1)
@@ -91,6 +121,7 @@ jobs:
             echo "## Test coverage"
             echo ""
             echo "Total coverage: **$COVERAGE_VALUE**"
+            echo "Threshold: **>= 95%**"
             echo ""
             echo '```'
             cat pytest-coverage.txt

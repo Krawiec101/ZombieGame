@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from contracts.game_state import SupplyRouteSnapshot
-from core.model.buildings import BaseState, LandingPadState, SUPPLY_RESOURCE_ORDER, SupplyRouteState
+from core.model.buildings import SUPPLY_RESOURCE_ORDER, BaseState, LandingPadState, SupplyRouteState
 from core.model.units import UnitState
 
 DEFAULT_SUPPLY_CONVOY_UNIT_TYPE_IDS = frozenset({"mechanized_squad"})

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from app.ui_event_handler import GameSessionPort
 from contracts.events import DomainEvent, UIEvent
 from contracts.main_menu_view import MainMenuView
-from app.ui_event_handler import GameSessionPort
 
 type UIEventHandler = Callable[[UIEvent, GameSessionPort], tuple[DomainEvent, ...]]
 type DomainEventRouter = Callable[[DomainEvent], bool]
