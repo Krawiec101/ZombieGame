@@ -1,5 +1,5 @@
 from .base_state import BaseState
-from .interfaces import ResourceStore, SupportsTransportCycle
+from .interfaces import ResourceStore, SupplyDispatchPoint, SupplyReceivePoint, SupportsTransportCycle
 from .landing_pad_state import LandingPadState
 from .landing_pad_type_spec import LandingPadTypeSpec
 from .resource_store import SUPPLY_RESOURCE_ORDER, empty_resource_store
@@ -14,6 +14,8 @@ __all__ = [
     "LandingPadTypeSpec",
     "ResourceStore",
     "SUPPLY_RESOURCE_ORDER",
+    "SupplyDispatchPoint",
+    "SupplyReceivePoint",
     "SupplyRouteState",
     "SupplyTransportState",
     "SupplyTransportTypeSpec",

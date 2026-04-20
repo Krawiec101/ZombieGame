@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +19,7 @@ from contracts.game_state import (
     MissionObjectiveProgressSnapshot,
     MissionReportSnapshot,
     RoadSnapshot,
+    SupplyRouteEndpointSnapshot,
     SupplyRouteSnapshot,
     SupplyTransportSnapshot,
     UnitCommanderSnapshot,
@@ -34,6 +35,8 @@ from core.model.buildings import (
     BaseState,
     LandingPadState,
     LandingPadTypeSpec,
+    SupplyDispatchPoint,
+    SupplyReceivePoint,
     SupplyRouteState,
     SupplyTransportState,
     SupplyTransportTypeSpec,
@@ -47,7 +50,7 @@ from core.model.units import (
     UnitTypeSpec,
 )
 from core.scenario_config import load_default_scenario_config
-from core.supply_route_manager import SupplyRouteManager
+from core.supply_route_manager import SupplyRouteEndpoint, SupplyRouteManager
 
 _SIMULATION_SECONDS_PER_TICK = 8.0
 _SUPPLY_INTERVAL_SECONDS = 45.0
@@ -361,9 +364,9 @@ class GameSession:
             selected_unit=self._get_selected_unit(),
             source_object_id=source_object_id,
             destination_object_id=destination_object_id,
-            landing_pads=self._landing_pads,
-            bases=self._bases,
-            is_landing_pad_secured=self._is_landing_pad_secured,
+            endpoints=self._supply_route_endpoints(),
+            dispatch_points=self._supply_dispatch_points(),
+            receive_points=self._supply_receive_points(),
             object_target_point=self._object_target_point,
             positions_match=self._positions_match,
             set_unit_target=lambda unit, target: self._set_unit_target(unit, target, road_mode="only"),
@@ -554,6 +557,21 @@ class GameSession:
             unit_supply_capacity=self._unit_supply_capacity,
         )
 
+    def supply_route_endpoints_snapshot(self) -> tuple[SupplyRouteEndpointSnapshot, ...]:
+        return tuple(
+            SupplyRouteEndpointSnapshot(
+                object_id=endpoint.object_id,
+                location_type=endpoint.location_type,
+                can_dispatch_supplies=endpoint.can_dispatch_supplies,
+                can_receive_supplies=endpoint.can_receive_supplies,
+                is_active=endpoint.is_active,
+            )
+            for endpoint in sorted(
+                self._supply_route_endpoints().values(),
+                key=lambda endpoint: endpoint.object_id,
+            )
+        )
+
     def supply_routes_state_snapshot(self) -> list[dict[str, Any]]:
         return self._supply_route_manager.supply_routes_state_snapshot()
 
@@ -625,6 +643,7 @@ class GameSession:
             mission_reports=self.mission_reports_snapshot(),  # pragma: no mutate
             landing_pads=self.landing_pads_snapshot(),  # pragma: no mutate
             bases=self.bases_snapshot(),  # pragma: no mutate
+            supply_route_endpoints=self.supply_route_endpoints_snapshot(),  # pragma: no mutate
             supply_transports=self.supply_transports_snapshot(),  # pragma: no mutate
             supply_routes=self.supply_routes_snapshot(),  # pragma: no mutate
             combats=self.combats_snapshot(),  # pragma: no mutate
@@ -1324,8 +1343,8 @@ class GameSession:
             route,
             elapsed_seconds=elapsed_seconds,
             find_unit_by_id=self._find_unit_by_id,
-            landing_pads=self._landing_pads,
-            bases=self._bases,
+            dispatch_points=self._supply_dispatch_points(),
+            receive_points=self._supply_receive_points(),
             object_target_point=self._object_target_point,
             positions_match=self._positions_match,
             set_unit_target=lambda unit, target: self._set_unit_target(unit, target, road_mode="only"),
@@ -1338,8 +1357,8 @@ class GameSession:
         self._supply_route_manager.refresh_route_pickup(
             route,
             unit,
-            landing_pads=self._landing_pads,
-            bases=self._bases,
+            dispatch_points=self._supply_dispatch_points(),
+            receive_points=self._supply_receive_points(),
             object_target_point=self._object_target_point,
             positions_match=self._positions_match,
             set_unit_target=lambda active_unit, target: self._set_unit_target(active_unit, target, road_mode="only"),
@@ -1351,7 +1370,7 @@ class GameSession:
         self._supply_route_manager.refresh_route_delivery(
             route,
             unit,
-            bases=self._bases,
+            receive_points=self._supply_receive_points(),
             object_target_point=self._object_target_point,
             positions_match=self._positions_match,
             set_unit_target=lambda active_unit, target: self._set_unit_target(active_unit, target, road_mode="only"),
@@ -1509,6 +1528,32 @@ class GameSession:
             remaining_capacity -= kept_amount
         return trimmed_resources
 
+    def _supply_route_endpoints(self) -> dict[str, SupplyRouteEndpoint]:
+        endpoints: dict[str, SupplyRouteEndpoint] = {}
+        for object_id, landing_pad in self._landing_pads.items():
+            endpoints[object_id] = SupplyRouteEndpoint(
+                object_id=object_id,
+                location_type="landing_pad",
+                can_dispatch_supplies=True,
+                can_receive_supplies=False,
+                is_active=self._is_landing_pad_secured(landing_pad),
+            )
+        for object_id in self._bases:
+            endpoints[object_id] = SupplyRouteEndpoint(
+                object_id=object_id,
+                location_type="base",
+                can_dispatch_supplies=False,
+                can_receive_supplies=True,
+                is_active=True,
+            )
+        return endpoints
+
+    def _supply_dispatch_points(self) -> Mapping[str, SupplyDispatchPoint]:
+        return dict(self._landing_pads)
+
+    def _supply_receive_points(self) -> Mapping[str, SupplyReceivePoint]:
+        return dict(self._bases)
+
     def _is_landing_pad_secured(self, landing_pad: LandingPadState) -> bool:
         return landing_pad.is_secured(self._objective_status)
 
@@ -1562,11 +1607,9 @@ class GameSession:
         destination_object_id: str,
     ) -> bool:
         return self._supply_route_manager.is_valid_route_pair(
-            source_object_id=source_object_id,
-            destination_object_id=destination_object_id,
-            landing_pads=self._landing_pads,
-            bases=self._bases,
-            is_landing_pad_secured=self._is_landing_pad_secured,
+            first_object_id=source_object_id,
+            second_object_id=destination_object_id,
+            endpoints=self._supply_route_endpoints(),
         )
 
     def _take_resources(self, storage: dict[str, int], amount: int) -> dict[str, int]:  # pragma: no mutate

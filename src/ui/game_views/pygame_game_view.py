@@ -12,6 +12,7 @@ from contracts.game_state import (
     MapObjectSnapshot,
     MissionObjectiveDefinitionSnapshot,
     RoadSnapshot,
+    SupplyRouteEndpointSnapshot,
     SupplyRouteSnapshot,
     SupplyTransportSnapshot,
     UnitSnapshot,
@@ -101,6 +102,7 @@ class PygameGameView:
         self._roads: list[RoadSnapshot] = []
         self._bases: dict[str, BaseSnapshot] = {}
         self._landing_pads: dict[str, LandingPadSnapshot] = {}
+        self._supply_route_endpoints: dict[str, SupplyRouteEndpointSnapshot] = {}
         self._supply_routes: list[SupplyRouteSnapshot] = []
         self._supply_transports: list[SupplyTransportSnapshot] = []
         self._units: list[UnitSnapshot] = []
@@ -116,6 +118,9 @@ class PygameGameView:
         self._roads = list(snapshot.roads)
         self._bases = {base.object_id: base for base in snapshot.bases}
         self._landing_pads = {landing_pad.object_id: landing_pad for landing_pad in snapshot.landing_pads}
+        self._supply_route_endpoints = {
+            endpoint.object_id: endpoint for endpoint in snapshot.supply_route_endpoints
+        }
         self._supply_routes = list(snapshot.supply_routes)
         self._supply_transports = list(snapshot.supply_transports)
         self._units = list(snapshot.units)
@@ -134,6 +139,7 @@ class PygameGameView:
         self._roads = []
         self._bases = {}
         self._landing_pads = {}
+        self._supply_route_endpoints = {}
         self._supply_routes = []
         self._supply_transports = []
         self._units = []
@@ -496,16 +502,25 @@ class PygameGameView:
     def supply_route_source_candidates(self) -> tuple[str, ...]:
         return tuple(
             sorted(
-                landing_pad.object_id
-                for landing_pad in self._landing_pads.values()
-                if landing_pad.is_secured
+                endpoint.object_id
+                for endpoint in self._supply_route_endpoints.values()
+                if endpoint.is_active and endpoint.can_dispatch_supplies
             )
         )
 
     def supply_route_destination_candidates(self, *, source_object_id: str) -> tuple[str, ...]:
-        if source_object_id not in self._landing_pads:
+        source_endpoint = self._supply_route_endpoints.get(source_object_id)
+        if source_endpoint is None or not source_endpoint.is_active or not source_endpoint.can_dispatch_supplies:
             return ()
-        return tuple(sorted(self._bases))
+        return tuple(
+            sorted(
+                endpoint.object_id
+                for endpoint in self._supply_route_endpoints.values()
+                if endpoint.object_id != source_object_id
+                and endpoint.is_active
+                and endpoint.can_receive_supplies
+            )
+        )
 
     def _find_hovered_map_object(self) -> MapObjectSnapshot | None:
         mouse_x, mouse_y = self._get_mouse_position()
