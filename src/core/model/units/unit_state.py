@@ -4,7 +4,9 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from .commander_state import CommanderState
+from .commanders import CommanderState, ExperienceLevel
+from .equipment import UnitEquipmentState, VehicleAssignmentState
+from .organization import UnitOrganizationState
 
 
 @dataclass
@@ -17,12 +19,19 @@ class UnitState:
     carried_resources: dict[str, int] = field(default_factory=dict)
     name: str = ""
     commander: CommanderState = field(default_factory=CommanderState)
-    experience_level: str = "basic"
+    experience_level: str = ExperienceLevel.BASIC
     personnel: int = 0
     morale: int = 0
     ammo: int = 0
     rations: int = 0
     fuel: int = 0
+    equipment: UnitEquipmentState = field(default_factory=UnitEquipmentState)
+    vehicles: tuple[VehicleAssignmentState, ...] = ()
+    organization: UnitOrganizationState = field(default_factory=UnitOrganizationState)
+
+    def __post_init__(self) -> None:
+        if self.commander is None:
+            raise ValueError("UnitState requires a commander instance.")
 
     def set_movement_target(
         self,
@@ -149,4 +158,7 @@ class UnitState:
         resource_order: Sequence[str],
     ) -> None:
         self.unload_supplies(delivered, resource_order=resource_order)
+
+    def total_assigned_vehicles(self) -> int:
+        return sum(max(0, int(vehicle.count)) for vehicle in self.vehicles)
 

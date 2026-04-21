@@ -10,6 +10,7 @@ from core.mission_objectives import (
     _load_default_mission_objective_rules,
     create_default_mission_objectives_evaluator,
 )
+from core.scenario_config import ScenarioConfig
 
 
 def test_default_evaluator_marks_landing_pad_cleared_when_no_zombies_remain_on_pad() -> None:
@@ -71,6 +72,59 @@ def test_default_mission_objective_rules_match_scenario_configuration_contract()
 
     assert DEFAULT_MISSION_OBJECTIVE_RULES == expected_rules
     assert _load_default_mission_objective_rules() == expected_rules
+
+
+def test_load_default_mission_objective_rules_applies_defaults_and_coercion(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.mission_objectives.load_default_scenario_config",
+        lambda: ScenarioConfig(
+            scenario_id="scenario",
+            campaign_id="campaign",
+            default_mission_id="mission",
+            mission_id="mission",
+            available_mission_ids=("mission",),
+            next_mission_id="",
+            default_stage_id="stage",
+            stage_id="stage",
+            available_stage_ids=("stage",),
+            map_width_km=20.0,
+            map_objects=(),
+            recon_sites=(),
+            roads=(),
+            initial_units=(),
+            initial_enemy_groups=(),
+            reinforcements=(),
+            mission_objectives=(
+                {},
+                {
+                    "objective_id": 12,
+                    "description_key": 13,
+                    "required_unit_type_id": 14,
+                    "target_object_id": 15,
+                    "objective_type": 16,
+                    "source_object_id": 17,
+                    "destination_object_id": 18,
+                    "required_reinforcements_found": "2",
+                },
+            ),
+            mission_reports=(),
+            stage_events=(),
+        ),
+    )
+
+    assert _load_default_mission_objective_rules() == (
+        MissionObjectiveRule(objective_id="", description_key=""),
+        MissionObjectiveRule(
+            objective_id="12",
+            description_key="13",
+            required_unit_type_id="14",
+            target_object_id="15",
+            objective_type="16",
+            source_object_id="17",
+            destination_object_id="18",
+            required_reinforcements_found=2,
+        ),
+    )
 
 
 def test_default_evaluator_keeps_landing_pad_uncleared_when_zombies_are_on_pad() -> None:
@@ -147,6 +201,18 @@ def test_evaluate_signature_exposes_zero_reinforcement_default() -> None:
 
     assert kwdefaults is not None
     assert kwdefaults["discovered_reinforcements_count"] == 0
+
+
+def test_create_default_mission_objectives_evaluator_uses_default_rules_constant() -> None:
+    evaluator = create_default_mission_objectives_evaluator()
+
+    assert evaluator.objectives() == tuple(
+        {
+            "objective_id": rule.objective_id,
+            "description_key": rule.description_key,
+        }
+        for rule in DEFAULT_MISSION_OBJECTIVE_RULES
+    )
 
 
 def test_unit_on_object_rule_still_supports_existing_projection_and_bounds_logic() -> None:

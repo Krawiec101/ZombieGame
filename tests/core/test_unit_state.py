@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from core.model.units import UnitState
+import pytest
+
+from core.model.units import (
+    CommanderState,
+    FormationLevel,
+    UnitEquipmentState,
+    UnitOrganizationState,
+    UnitState,
+    VehicleAssignmentState,
+)
 
 
 def test_load_supplies_respects_remaining_capacity_and_resource_order() -> None:
@@ -49,3 +58,41 @@ def test_clear_supplies_resets_carried_resources_to_zero() -> None:
     unit.clear_supplies(resource_order=("fuel", "mre", "ammo"))
 
     assert unit.carried_resources == {"fuel": 0, "mre": 0, "ammo": 0}
+
+
+def test_unit_state_requires_commander_instance() -> None:
+    with pytest.raises(ValueError):
+        UnitState(
+            unit_id="u1",
+            unit_type_id="infantry_squad",
+            position=(0.0, 0.0),
+            commander=None,  # type: ignore[arg-type]
+        )
+
+
+def test_unit_state_can_store_equipment_vehicles_and_organization() -> None:
+    unit = UnitState(
+        unit_id="u1",
+        unit_type_id="mechanized_squad",
+        position=(0.0, 0.0),
+        commander=CommanderState(name="sier. Ada", rank="sergeant", experience_level="trained"),
+        equipment=UnitEquipmentState(
+            primary_weapon_key="game.unit.weapon.rifle",
+            support_weapon_key="game.unit.weapon.lmg",
+            vest_key="game.unit.vest.plate",
+        ),
+        vehicles=(
+            VehicleAssignmentState(vehicle_type_id="apc", count=2),
+            VehicleAssignmentState(vehicle_type_id="truck", count=1),
+        ),
+        organization=UnitOrganizationState(
+            formation_level=FormationLevel.SQUAD,
+            subordinate_unit_ids=("fireteam_alpha", "fireteam_bravo"),
+            max_subordinate_units=3,
+        ),
+    )
+
+    assert unit.equipment.primary_weapon_key == "game.unit.weapon.rifle"
+    assert unit.equipment.vest_key == "game.unit.vest.plate"
+    assert unit.total_assigned_vehicles() == 3
+    assert unit.organization.can_attach_subordinate() is True
