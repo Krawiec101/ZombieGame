@@ -17,6 +17,7 @@ from contracts.game_state import (
     MissionObjectiveDefinitionSnapshot,
     MissionObjectiveProgressSnapshot,
     RoadSnapshot,
+    SupplyRouteEndpointSnapshot,
     SupplyRouteSnapshot,
     SupplyTransportSnapshot,
     UnitCommanderSnapshot,
@@ -297,6 +298,22 @@ def _sample_game_state(
                     LandingPadResourceSnapshot(resource_id="mre", amount=6),
                     LandingPadResourceSnapshot(resource_id="ammo", amount=6),
                 ),
+            ),
+        ),
+        supply_route_endpoints=(
+            SupplyRouteEndpointSnapshot(
+                object_id="hq",
+                location_type="base",
+                can_dispatch_supplies=False,
+                can_receive_supplies=True,
+                is_active=True,
+            ),
+            SupplyRouteEndpointSnapshot(
+                object_id="landing_pad",
+                location_type="landing_pad",
+                can_dispatch_supplies=True,
+                can_receive_supplies=False,
+                is_active=True,
             ),
         ),
         supply_transports=(
@@ -717,6 +734,32 @@ def test_selected_unit_can_create_supply_route_reflects_snapshot_flags(game_view
     assert game_view.view.supply_route_source_candidates() == ("landing_pad",)
     assert game_view.view.supply_route_destination_candidates(source_object_id="landing_pad") == ("hq",)
     assert game_view.view.supply_route_destination_candidates(source_object_id="hq") == ()
+
+
+def test_supply_route_candidates_use_generic_endpoint_capabilities(game_view) -> None:
+    state = _sample_game_state()
+    generic_state = replace(
+        state,
+        supply_route_endpoints=state.supply_route_endpoints
+        + (
+            SupplyRouteEndpointSnapshot(
+                object_id="field_depot",
+                location_type="field_depot",
+                can_dispatch_supplies=True,
+                can_receive_supplies=True,
+                is_active=True,
+            ),
+        ),
+    )
+
+    game_view.view.apply_game_state(snapshot=generic_state)
+
+    assert game_view.view.supply_route_source_candidates() == ("field_depot", "landing_pad")
+    assert game_view.view.supply_route_destination_candidates(source_object_id="landing_pad") == (
+        "field_depot",
+        "hq",
+    )
+    assert game_view.view.supply_route_destination_candidates(source_object_id="field_depot") == ("hq",)
 
 
 def test_selected_unit_can_create_supply_route_only_for_mechanized_unit(game_view) -> None:

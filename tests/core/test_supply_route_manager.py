@@ -4,7 +4,12 @@ import math
 
 from core.model.buildings import BaseState, LandingPadState, SupplyRouteState
 from core.model.units import UnitState
-from core.supply_route_manager import SupplyRouteManager
+from core.supply_route_manager import (
+    SupplyRouteEndpoint,
+    SupplyRouteManager,
+    SupplyRoutePairDirection,
+    SupplyRouteValidationIssue,
+)
 
 
 def _positions_match(first: tuple[float, float], second: tuple[float, float]) -> bool:
@@ -14,6 +19,107 @@ def _positions_match(first: tuple[float, float], second: tuple[float, float]) ->
 def _set_unit_target(unit: UnitState, target: tuple[float, float]) -> None:
     unit.target = target
     unit.path = (target,)
+
+
+def _route_endpoints(*, landing_pad_active: bool = True) -> dict[str, SupplyRouteEndpoint]:
+    return {
+        "landing_pad": SupplyRouteEndpoint(
+            object_id="landing_pad",
+            location_type="landing_pad",
+            can_dispatch_supplies=True,
+            can_receive_supplies=False,
+            is_active=landing_pad_active,
+        ),
+        "hq": SupplyRouteEndpoint(
+            object_id="hq",
+            location_type="base",
+            can_dispatch_supplies=False,
+            can_receive_supplies=True,
+            is_active=True,
+        ),
+        "field_depot": SupplyRouteEndpoint(
+            object_id="field_depot",
+            location_type="field_depot",
+            can_dispatch_supplies=True,
+            can_receive_supplies=True,
+            is_active=True,
+        ),
+        "relay_point": SupplyRouteEndpoint(
+            object_id="relay_point",
+            location_type="relay_point",
+            can_dispatch_supplies=True,
+            can_receive_supplies=True,
+            is_active=True,
+        ),
+    }
+
+
+def test_validate_route_pair_resolves_direction_for_generic_endpoints() -> None:
+    manager = SupplyRouteManager()
+
+    forward_result = manager.validate_route_pair(
+        first_object_id="landing_pad",
+        second_object_id="hq",
+        endpoints=_route_endpoints(),
+    )
+    reverse_result = manager.validate_route_pair(
+        first_object_id="hq",
+        second_object_id="landing_pad",
+        endpoints=_route_endpoints(),
+    )
+    bidirectional_result = manager.validate_route_pair(
+        first_object_id="field_depot",
+        second_object_id="relay_point",
+        endpoints=_route_endpoints(),
+    )
+
+    assert forward_result.is_valid is True
+    assert forward_result.direction == SupplyRoutePairDirection.FIRST_TO_SECOND
+    assert forward_result.source_object_id == "landing_pad"
+    assert forward_result.destination_object_id == "hq"
+
+    assert reverse_result.is_valid is True
+    assert reverse_result.direction == SupplyRoutePairDirection.SECOND_TO_FIRST
+    assert reverse_result.source_object_id == "landing_pad"
+    assert reverse_result.destination_object_id == "hq"
+
+    assert bidirectional_result.is_valid is True
+    assert bidirectional_result.direction == SupplyRoutePairDirection.BIDIRECTIONAL
+    assert bidirectional_result.source_object_id == "field_depot"
+    assert bidirectional_result.destination_object_id == "relay_point"
+
+
+def test_validate_route_pair_rejects_inactive_or_unknown_endpoints() -> None:
+    manager = SupplyRouteManager()
+
+    inactive_result = manager.validate_route_pair(
+        first_object_id="landing_pad",
+        second_object_id="hq",
+        endpoints=_route_endpoints(landing_pad_active=False),
+    )
+    unknown_result = manager.validate_route_pair(
+        first_object_id="landing_pad",
+        second_object_id="missing",
+        endpoints=_route_endpoints(),
+    )
+
+    assert inactive_result.is_valid is False
+    assert inactive_result.issue == SupplyRouteValidationIssue.INACTIVE_ENDPOINT
+    assert unknown_result.is_valid is False
+    assert unknown_result.issue == SupplyRouteValidationIssue.UNKNOWN_ENDPOINT
+
+
+def test_validate_route_requires_explicit_source_to_dispatch_and_destination_to_receive() -> None:
+    manager = SupplyRouteManager()
+
+    result = manager.validate_route(
+        source_object_id="hq",
+        destination_object_id="landing_pad",
+        endpoints=_route_endpoints(),
+    )
+
+    assert result.is_valid is False
+    assert result.issue == SupplyRouteValidationIssue.INCOMPATIBLE_DIRECTION
 
 
 def test_create_route_clears_previous_route_and_targets_pickup() -> None:
@@ -43,7 +149,8 @@ def test_create_route_clears_previous_route_and_targets_pickup() -> None:
         selected_unit=unit,
         source_object_id="landing_pad",
         destination_object_id="hq",
-        landing_pads={
+        endpoints=_route_endpoints(),
+        dispatch_points={
             "landing_pad": LandingPadState(
                 object_id="landing_pad",
                 pad_size="small",
@@ -51,8 +158,7 @@ def test_create_route_clears_previous_route_and_targets_pickup() -> None:
                 secured_by_objective_id="",
             )
         },
-        bases={"hq": BaseState(object_id="hq", capacity=20)},
-        is_landing_pad_secured=lambda _landing_pad: True,
+        receive_points={"hq": BaseState(object_id="hq", capacity=20)},
         object_target_point=lambda object_id, _unit_type_id: {
             "landing_pad": (5.0, 5.0),
             "hq": (15.0, 15.0),
@@ -83,7 +189,8 @@ def test_create_route_rejects_unit_type_without_convoy_permission() -> None:
         selected_unit=unit,
         source_object_id="landing_pad",
         destination_object_id="hq",
-        landing_pads={
+        endpoints=_route_endpoints(),
+        dispatch_points={
             "landing_pad": LandingPadState(
                 object_id="landing_pad",
                 pad_size="small",
@@ -91,8 +198,7 @@ def test_create_route_rejects_unit_type_without_convoy_permission() -> None:
                 secured_by_objective_id="",
             )
         },
-        bases={"hq": BaseState(object_id="hq", capacity=20)},
-        is_landing_pad_secured=lambda _landing_pad: True,
+        receive_points={"hq": BaseState(object_id="hq", capacity=20)},
         object_target_point=lambda object_id, _unit_type_id: {
             "landing_pad": (5.0, 5.0),
             "hq": (15.0, 15.0),
@@ -145,8 +251,8 @@ def test_refresh_route_pickup_loads_supplies_and_sends_unit_to_dropoff() -> None
         elapsed_seconds=0.0,
         load_seconds=6.0,
         find_unit_by_id=lambda unit_id: unit if unit_id == "u1" else None,
-        landing_pads={"landing_pad": landing_pad},
-        bases={"hq": base},
+        dispatch_points={"landing_pad": landing_pad},
+        receive_points={"hq": base},
         object_target_point=lambda object_id, _unit_type_id: {
             "landing_pad": (5.0, 5.0),
             "hq": (15.0, 15.0),
@@ -167,8 +273,8 @@ def test_refresh_route_pickup_loads_supplies_and_sends_unit_to_dropoff() -> None
         elapsed_seconds=6.0,
         load_seconds=6.0,
         find_unit_by_id=lambda unit_id: unit if unit_id == "u1" else None,
-        landing_pads={"landing_pad": landing_pad},
-        bases={"hq": base},
+        dispatch_points={"landing_pad": landing_pad},
+        receive_points={"hq": base},
         object_target_point=lambda object_id, _unit_type_id: {
             "landing_pad": (5.0, 5.0),
             "hq": (15.0, 15.0),
@@ -217,7 +323,7 @@ def test_refresh_route_delivery_unloads_partial_cargo_and_waits_for_capacity() -
         elapsed_seconds=0.0,
         unload_seconds=6.0,
         find_unit_by_id=lambda unit_id: unit if unit_id == "u1" else None,
-        landing_pads={
+        dispatch_points={
             "landing_pad": LandingPadState(
                 object_id="landing_pad",
                 pad_size="small",
@@ -225,7 +331,7 @@ def test_refresh_route_delivery_unloads_partial_cargo_and_waits_for_capacity() -
                 secured_by_objective_id="",
             )
         },
-        bases={"hq": base},
+        receive_points={"hq": base},
         object_target_point=lambda object_id, _unit_type_id: {
             "landing_pad": (5.0, 5.0),
             "hq": (15.0, 15.0),
@@ -247,7 +353,7 @@ def test_refresh_route_delivery_unloads_partial_cargo_and_waits_for_capacity() -
         elapsed_seconds=6.0,
         unload_seconds=6.0,
         find_unit_by_id=lambda unit_id: unit if unit_id == "u1" else None,
-        landing_pads={
+        dispatch_points={
             "landing_pad": LandingPadState(
                 object_id="landing_pad",
                 pad_size="small",
@@ -255,7 +361,7 @@ def test_refresh_route_delivery_unloads_partial_cargo_and_waits_for_capacity() -
                 secured_by_objective_id="",
             )
         },
-        bases={"hq": base},
+        receive_points={"hq": base},
         object_target_point=lambda object_id, _unit_type_id: {
             "landing_pad": (5.0, 5.0),
             "hq": (15.0, 15.0),
@@ -304,8 +410,8 @@ def test_refresh_route_loading_revalidates_pickup_position_before_taking_supplie
         route,
         elapsed_seconds=1.0,
         find_unit_by_id=lambda unit_id: unit if unit_id == "u1" else None,
-        landing_pads={"landing_pad": landing_pad},
-        bases={"hq": base},
+        dispatch_points={"landing_pad": landing_pad},
+        receive_points={"hq": base},
         object_target_point=lambda object_id, _unit_type_id: {
             "landing_pad": (5.0, 5.0),
             "hq": (15.0, 15.0),
@@ -347,7 +453,7 @@ def test_refresh_route_unloading_revalidates_dropoff_position_before_storing_sup
         route,
         elapsed_seconds=1.0,
         find_unit_by_id=lambda unit_id: unit if unit_id == "u1" else None,
-        landing_pads={
+        dispatch_points={
             "landing_pad": LandingPadState(
                 object_id="landing_pad",
                 pad_size="small",
@@ -355,7 +461,7 @@ def test_refresh_route_unloading_revalidates_dropoff_position_before_storing_sup
                 secured_by_objective_id="",
             )
         },
-        bases={"hq": base},
+        receive_points={"hq": base},
         object_target_point=lambda object_id, _unit_type_id: {
             "landing_pad": (5.0, 5.0),
             "hq": (15.0, 15.0),
@@ -418,8 +524,8 @@ def test_refresh_route_uses_service_time_resolvers_per_unit_type() -> None:
     manager.refresh_route(
         route_to_pickup,
         find_unit_by_id=lambda unit_id: units.get(unit_id),
-        landing_pads={"landing_pad": landing_pad},
-        bases={"hq": base},
+        dispatch_points={"landing_pad": landing_pad},
+        receive_points={"hq": base},
         object_target_point=lambda object_id, unit_type_id: target_points[(object_id, unit_type_id)],
         positions_match=_positions_match,
         set_unit_target=_set_unit_target,
@@ -430,8 +536,8 @@ def test_refresh_route_uses_service_time_resolvers_per_unit_type() -> None:
     manager.refresh_route(
         route_to_dropoff,
         find_unit_by_id=lambda unit_id: units.get(unit_id),
-        landing_pads={"landing_pad": landing_pad},
-        bases={"hq": base},
+        dispatch_points={"landing_pad": landing_pad},
+        receive_points={"hq": base},
         object_target_point=lambda object_id, unit_type_id: target_points[(object_id, unit_type_id)],
         positions_match=_positions_match,
         set_unit_target=_set_unit_target,

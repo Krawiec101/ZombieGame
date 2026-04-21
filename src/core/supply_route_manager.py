@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from contracts.game_state import SupplyRouteSnapshot
-from core.model.buildings import SUPPLY_RESOURCE_ORDER, BaseState, LandingPadState, SupplyRouteState
+from core.model.buildings import SUPPLY_RESOURCE_ORDER, SupplyDispatchPoint, SupplyReceivePoint, SupplyRouteState
 from core.model.units import UnitState
 
 DEFAULT_SUPPLY_CONVOY_UNIT_TYPE_IDS = frozenset({"mechanized_squad"})
@@ -16,9 +17,42 @@ PositionsMatch = Callable[[tuple[float, float], tuple[float, float]], bool]
 UnitTargetSetter = Callable[[UnitState, tuple[float, float]], None]
 UnitSupplyCapacityResolver = Callable[[str], int]
 RouteServiceSecondsResolver = Callable[[str], float]
-LandingPadSecurityChecker = Callable[[LandingPadState], bool]
 RouteRefresher = Callable[[SupplyRouteState], None]
 UnitTransportCapabilityChecker = Callable[[str], bool]
+
+
+@dataclass(frozen=True)
+class SupplyRouteEndpoint:
+    object_id: str
+    location_type: str
+    can_dispatch_supplies: bool
+    can_receive_supplies: bool
+    is_active: bool = True
+
+
+class SupplyRoutePairDirection(StrEnum):
+    FIRST_TO_SECOND = "first_to_second"
+    SECOND_TO_FIRST = "second_to_first"
+    BIDIRECTIONAL = "bidirectional"
+
+
+class SupplyRouteValidationIssue(StrEnum):
+    SAME_ENDPOINT = "same_endpoint"
+    UNKNOWN_ENDPOINT = "unknown_endpoint"
+    INACTIVE_ENDPOINT = "inactive_endpoint"
+    INCOMPATIBLE_DIRECTION = "incompatible_direction"
+    UNIT_CANNOT_TRANSPORT = "unit_cannot_transport"
+
+
+@dataclass(frozen=True)
+class SupplyRouteValidationResult:
+    is_valid: bool
+    source_object_id: str | None = None
+    destination_object_id: str | None = None
+    source_location_type: str | None = None
+    destination_location_type: str | None = None
+    direction: SupplyRoutePairDirection | None = None
+    issue: SupplyRouteValidationIssue | None = None
 
 
 @dataclass
@@ -41,15 +75,107 @@ class SupplyRouteManager:
             return self.can_unit_type_transport_supplies(unit_type_id)
         return unit_type_id in self.convoy_unit_type_ids
 
+    def validate_route_pair(
+        self,
+        *,
+        first_object_id: str,
+        second_object_id: str,
+        endpoints: Mapping[str, SupplyRouteEndpoint],
+        selected_unit: UnitState | None = None,
+    ) -> SupplyRouteValidationResult:
+        if first_object_id == second_object_id:
+            return self._invalid_validation_result(SupplyRouteValidationIssue.SAME_ENDPOINT)
+
+        if self._selected_unit_cannot_transport(selected_unit):
+            return self._invalid_validation_result(SupplyRouteValidationIssue.UNIT_CANNOT_TRANSPORT)
+
+        first_endpoint = endpoints.get(first_object_id)
+        second_endpoint = endpoints.get(second_object_id)
+        if first_endpoint is None or second_endpoint is None:
+            return self._invalid_validation_result(SupplyRouteValidationIssue.UNKNOWN_ENDPOINT)
+
+        if not first_endpoint.is_active or not second_endpoint.is_active:
+            return self._invalid_validation_result(SupplyRouteValidationIssue.INACTIVE_ENDPOINT)
+
+        return self._validation_result_for_direction(
+            first_object_id=first_object_id,
+            second_object_id=second_object_id,
+            first_endpoint=first_endpoint,
+            second_endpoint=second_endpoint,
+        )
+
+    def validate_route(
+        self,
+        *,
+        source_object_id: str,
+        destination_object_id: str,
+        endpoints: Mapping[str, SupplyRouteEndpoint],
+        selected_unit: UnitState | None = None,
+    ) -> SupplyRouteValidationResult:
+        result = self.validate_route_pair(
+            first_object_id=source_object_id,
+            second_object_id=destination_object_id,
+            endpoints=endpoints,
+            selected_unit=selected_unit,
+        )
+        if (
+            not result.is_valid
+            or result.source_object_id != source_object_id
+            or result.destination_object_id != destination_object_id
+        ):
+            return self._invalid_validation_result(
+                result.issue or SupplyRouteValidationIssue.INCOMPATIBLE_DIRECTION
+            )
+        return result
+
+    def _selected_unit_cannot_transport(self, selected_unit: UnitState | None) -> bool:
+        return selected_unit is not None and not self.can_unit_create_convoy(selected_unit)
+
+    def _invalid_validation_result(self, issue: SupplyRouteValidationIssue) -> SupplyRouteValidationResult:
+        return SupplyRouteValidationResult(is_valid=False, issue=issue)
+
+    def _validation_result_for_direction(
+        self,
+        *,
+        first_object_id: str,
+        second_object_id: str,
+        first_endpoint: SupplyRouteEndpoint,
+        second_endpoint: SupplyRouteEndpoint,
+    ) -> SupplyRouteValidationResult:
+        if first_endpoint.can_dispatch_supplies and second_endpoint.can_receive_supplies:
+            direction = SupplyRoutePairDirection.FIRST_TO_SECOND
+            if second_endpoint.can_dispatch_supplies and first_endpoint.can_receive_supplies:
+                direction = SupplyRoutePairDirection.BIDIRECTIONAL
+            return SupplyRouteValidationResult(
+                is_valid=True,
+                source_object_id=first_object_id,
+                destination_object_id=second_object_id,
+                source_location_type=first_endpoint.location_type,
+                destination_location_type=second_endpoint.location_type,
+                direction=direction,
+            )
+
+        if second_endpoint.can_dispatch_supplies and first_endpoint.can_receive_supplies:
+            return SupplyRouteValidationResult(
+                is_valid=True,
+                source_object_id=second_object_id,
+                destination_object_id=first_object_id,
+                source_location_type=second_endpoint.location_type,
+                destination_location_type=first_endpoint.location_type,
+                direction=SupplyRoutePairDirection.SECOND_TO_FIRST,
+            )
+
+        return self._invalid_validation_result(SupplyRouteValidationIssue.INCOMPATIBLE_DIRECTION)
+
     def create_route(
         self,
         *,
         selected_unit: UnitState | None,
         source_object_id: str,
         destination_object_id: str,
-        landing_pads: Mapping[str, LandingPadState],
-        bases: Mapping[str, BaseState],
-        is_landing_pad_secured: LandingPadSecurityChecker,
+        endpoints: Mapping[str, SupplyRouteEndpoint],
+        dispatch_points: Mapping[str, SupplyDispatchPoint],
+        receive_points: Mapping[str, SupplyReceivePoint],
         object_target_point: ObjectTargetPointResolver,
         positions_match: PositionsMatch,
         set_unit_target: UnitTargetSetter,
@@ -57,17 +183,17 @@ class SupplyRouteManager:
         find_unit_by_id: UnitFinder,
         refresh_route: RouteRefresher | None = None,
     ) -> None:
-        if not self.can_unit_create_convoy(selected_unit):
-            return
-
-        assert selected_unit is not None
-
-        if not self.is_valid_route_pair(
+        validation = self.validate_route(
             source_object_id=source_object_id,
             destination_object_id=destination_object_id,
-            landing_pads=landing_pads,
-            bases=bases,
-            is_landing_pad_secured=is_landing_pad_secured,
+            endpoints=endpoints,
+            selected_unit=selected_unit,
+        )
+        if (
+            not validation.is_valid
+            or selected_unit is None
+            or source_object_id not in dispatch_points
+            or destination_object_id not in receive_points
         ):
             return
 
@@ -90,8 +216,8 @@ class SupplyRouteManager:
         self.refresh_route(
             route,
             find_unit_by_id=find_unit_by_id,
-            landing_pads=landing_pads,
-            bases=bases,
+            dispatch_points=dispatch_points,
+            receive_points=receive_points,
             object_target_point=object_target_point,
             positions_match=positions_match,
             set_unit_target=set_unit_target,
@@ -135,11 +261,17 @@ class SupplyRouteManager:
             for route in self.routes.values()
         ]
 
-    def route_id_for_unit(self, unit_id: str) -> str | None:
+    def route_for_unit(self, unit_id: str) -> SupplyRouteState | None:
         for route in self.routes.values():
             if route.unit_id == unit_id:
-                return route.route_id
+                return route
         return None
+
+    def route_id_for_unit(self, unit_id: str) -> str | None:
+        route = self.route_for_unit(unit_id)
+        if route is None:
+            return None
+        return route.route_id
 
     def unit_has_route(self, unit_id: str) -> bool:
         return self.route_id_for_unit(unit_id) is not None
@@ -152,15 +284,17 @@ class SupplyRouteManager:
     def is_valid_route_pair(
         self,
         *,
-        source_object_id: str,
-        destination_object_id: str,
-        landing_pads: Mapping[str, LandingPadState],
-        bases: Mapping[str, BaseState],
-        is_landing_pad_secured: LandingPadSecurityChecker,
+        first_object_id: str,
+        second_object_id: str,
+        endpoints: Mapping[str, SupplyRouteEndpoint],
+        selected_unit: UnitState | None = None,
     ) -> bool:
-        if source_object_id not in landing_pads or destination_object_id not in bases:
-            return False
-        return is_landing_pad_secured(landing_pads[source_object_id])
+        return self.validate_route_pair(
+            first_object_id=first_object_id,
+            second_object_id=second_object_id,
+            endpoints=endpoints,
+            selected_unit=selected_unit,
+        ).is_valid
 
     def refresh_route(
         self,
@@ -170,8 +304,8 @@ class SupplyRouteManager:
         load_seconds: float = 0.0,
         unload_seconds: float = 0.0,
         find_unit_by_id: UnitFinder,
-        landing_pads: Mapping[str, LandingPadState],
-        bases: Mapping[str, BaseState],
+        dispatch_points: Mapping[str, SupplyDispatchPoint],
+        receive_points: Mapping[str, SupplyReceivePoint],
         object_target_point: ObjectTargetPointResolver,
         positions_match: PositionsMatch,
         set_unit_target: UnitTargetSetter,
@@ -184,7 +318,7 @@ class SupplyRouteManager:
             self.routes.pop(route.route_id, None)
             return
 
-        if route.source_object_id not in landing_pads or route.destination_object_id not in bases:
+        if route.source_object_id not in dispatch_points or route.destination_object_id not in receive_points:
             self.clear_route_for_unit(route.unit_id)
             return
 
@@ -193,8 +327,8 @@ class SupplyRouteManager:
                 route,
                 unit,
                 elapsed_seconds=elapsed_seconds,
-                landing_pads=landing_pads,
-                bases=bases,
+                dispatch_points=dispatch_points,
+                receive_points=receive_points,
                 object_target_point=object_target_point,
                 positions_match=positions_match,
                 set_unit_target=set_unit_target,
@@ -207,7 +341,7 @@ class SupplyRouteManager:
                 route,
                 unit,
                 elapsed_seconds=elapsed_seconds,
-                bases=bases,
+                receive_points=receive_points,
                 object_target_point=object_target_point,
                 positions_match=positions_match,
                 set_unit_target=set_unit_target,
@@ -218,7 +352,7 @@ class SupplyRouteManager:
             self.refresh_route_delivery(
                 route,
                 unit,
-                bases=bases,
+                receive_points=receive_points,
                 object_target_point=object_target_point,
                 positions_match=positions_match,
                 set_unit_target=set_unit_target,
@@ -230,8 +364,8 @@ class SupplyRouteManager:
         self.refresh_route_pickup(
             route,
             unit,
-            landing_pads=landing_pads,
-            bases=bases,
+            dispatch_points=dispatch_points,
+            receive_points=receive_points,
             object_target_point=object_target_point,
             positions_match=positions_match,
             set_unit_target=set_unit_target,
@@ -245,8 +379,8 @@ class SupplyRouteManager:
         route: SupplyRouteState,
         unit: UnitState,
         *,
-        landing_pads: Mapping[str, LandingPadState],
-        bases: Mapping[str, BaseState],
+        dispatch_points: Mapping[str, SupplyDispatchPoint],
+        receive_points: Mapping[str, SupplyReceivePoint],
         object_target_point: ObjectTargetPointResolver,
         positions_match: PositionsMatch,
         set_unit_target: UnitTargetSetter,
@@ -262,8 +396,8 @@ class SupplyRouteManager:
             route.service_seconds_remaining = 0.0
             return
 
-        source = landing_pads[route.source_object_id]
-        destination = bases[route.destination_object_id]
+        source = dispatch_points[route.source_object_id]
+        destination = receive_points[route.destination_object_id]
         available_at_source = source.total_stored(resource_order=self.resource_order)
         free_at_destination = destination.free_capacity(resource_order=self.resource_order)
         unit_capacity = unit_supply_capacity(unit.unit_type_id)
@@ -291,13 +425,17 @@ class SupplyRouteManager:
         route: SupplyRouteState,
         unit: UnitState,
         *,
-        bases: Mapping[str, BaseState],
+        receive_points: Mapping[str, SupplyReceivePoint],
         object_target_point: ObjectTargetPointResolver,
         positions_match: PositionsMatch,
         set_unit_target: UnitTargetSetter,
         unload_seconds: float = 0.0,
         unit_unload_seconds: RouteServiceSecondsResolver | None = None,
     ) -> None:
+        if route.destination_object_id not in receive_points:
+            self.clear_route_for_unit(route.unit_id)
+            return
+
         dropoff_target = object_target_point(route.destination_object_id, unit.unit_type_id)
         if not positions_match(unit.position, dropoff_target):
             if unit.target is None or not positions_match(unit.target, dropoff_target):
@@ -335,8 +473,8 @@ class SupplyRouteManager:
         unit: UnitState,
         *,
         elapsed_seconds: float,
-        landing_pads: Mapping[str, LandingPadState],
-        bases: Mapping[str, BaseState],
+        dispatch_points: Mapping[str, SupplyDispatchPoint],
+        receive_points: Mapping[str, SupplyReceivePoint],
         object_target_point: ObjectTargetPointResolver,
         positions_match: PositionsMatch,
         set_unit_target: UnitTargetSetter,
@@ -353,8 +491,8 @@ class SupplyRouteManager:
             route.service_seconds_remaining = 0.0
             return
 
-        source = landing_pads[route.source_object_id]
-        destination = bases[route.destination_object_id]
+        source = dispatch_points[route.source_object_id]
+        destination = receive_points[route.destination_object_id]
         available_at_source = source.total_stored(resource_order=self.resource_order)
         free_at_destination = destination.free_capacity(resource_order=self.resource_order)
         unit_capacity = unit_supply_capacity(unit.unit_type_id)
@@ -380,7 +518,7 @@ class SupplyRouteManager:
         unit: UnitState,
         *,
         elapsed_seconds: float,
-        bases: Mapping[str, BaseState],
+        receive_points: Mapping[str, SupplyReceivePoint],
         object_target_point: ObjectTargetPointResolver,
         positions_match: PositionsMatch,
         set_unit_target: UnitTargetSetter,
@@ -396,7 +534,7 @@ class SupplyRouteManager:
             route.service_seconds_remaining = 0.0
             return
 
-        destination = bases[route.destination_object_id]
+        destination = receive_points[route.destination_object_id]
         delivered_resources = destination.store_resources(
             unit.carried_resources,
             resource_order=self.resource_order,

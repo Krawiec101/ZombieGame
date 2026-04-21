@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Protocol
 
 
@@ -11,6 +11,32 @@ class ResourceStore(Protocol):
     def total_stored(self, *, resource_order: Sequence[str]) -> int: ...
 
     def free_capacity(self, *, resource_order: Sequence[str]) -> int: ...
+
+
+class SupplyDispatchPoint(Protocol):
+    object_id: str
+
+    def total_stored(self, *, resource_order: Sequence[str]) -> int: ...
+
+    def take_resources(
+        self,
+        amount: int,
+        *,
+        resource_order: Sequence[str],
+    ) -> dict[str, int]: ...
+
+
+class SupplyReceivePoint(Protocol):
+    object_id: str
+
+    def free_capacity(self, *, resource_order: Sequence[str]) -> int: ...
+
+    def store_resources(
+        self,
+        cargo: Mapping[str, int],
+        *,
+        resource_order: Sequence[str],
+    ) -> dict[str, int]: ...
 
 
 class SupportsTransportCycle(Protocol):

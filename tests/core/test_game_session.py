@@ -4032,8 +4032,29 @@ def test_is_valid_supply_route_pair_requires_both_source_and_destination() -> No
     session._objective_status["landing_pad_cleared"] = True
 
     assert session._is_valid_supply_route_pair(source_object_id="landing_pad", destination_object_id="hq") is True
+    assert session._is_valid_supply_route_pair(source_object_id="hq", destination_object_id="landing_pad") is True
     assert session._is_valid_supply_route_pair(source_object_id="landing_pad", destination_object_id="missing") is False
     assert session._is_valid_supply_route_pair(source_object_id="missing", destination_object_id="hq") is False
+
+
+def test_supply_route_endpoints_snapshot_exposes_generic_capabilities() -> None:
+    session = create_default_game_session()
+    session.update_map_dimensions(width=960, height=640)
+
+    inactive_before_secured = {endpoint.object_id: endpoint for endpoint in session.supply_route_endpoints_snapshot()}
+    session._objective_status["landing_pad_cleared"] = True
+    active_after_secured = {endpoint.object_id: endpoint for endpoint in session.supply_route_endpoints_snapshot()}
+
+    assert inactive_before_secured["landing_pad"].location_type == "landing_pad"
+    assert inactive_before_secured["landing_pad"].can_dispatch_supplies is True
+    assert inactive_before_secured["landing_pad"].can_receive_supplies is False
+    assert inactive_before_secured["landing_pad"].is_active is False
+
+    assert active_after_secured["hq"].location_type == "base"
+    assert active_after_secured["hq"].can_dispatch_supplies is False
+    assert active_after_secured["hq"].can_receive_supplies is True
+    assert active_after_secured["hq"].is_active is True
+    assert active_after_secured["landing_pad"].is_active is True
 
 
 def test_tick_passes_runtime_snapshots_and_elapsed_times_to_subsystems() -> None:

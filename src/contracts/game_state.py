@@ -147,6 +147,15 @@ class SupplyRouteSnapshot:
 
 
 @dataclass(frozen=True)
+class SupplyRouteEndpointSnapshot:
+    object_id: str
+    location_type: str
+    can_dispatch_supplies: bool
+    can_receive_supplies: bool
+    is_active: bool
+
+
+@dataclass(frozen=True)
 class GameStateSnapshot:
     map_objects: tuple[MapObjectSnapshot, ...]
     units: tuple[UnitSnapshot, ...]
@@ -158,6 +167,7 @@ class GameStateSnapshot:
     roads: tuple[RoadSnapshot, ...] = ()
     landing_pads: tuple[LandingPadSnapshot, ...] = ()
     bases: tuple[BaseSnapshot, ...] = ()
+    supply_route_endpoints: tuple[SupplyRouteEndpointSnapshot, ...] = ()
     supply_transports: tuple[SupplyTransportSnapshot, ...] = ()
     supply_routes: tuple[SupplyRouteSnapshot, ...] = ()
     combats: tuple[CombatSnapshot, ...] = ()
