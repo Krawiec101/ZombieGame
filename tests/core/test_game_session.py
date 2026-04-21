@@ -24,6 +24,7 @@ from core.game_session import (
     REINFORCEMENT_TEMPLATES,
     SUPPLY_TRANSPORT_TYPE_SPECS,
     UNIT_TYPE_SPECS,
+    VEHICLE_TYPE_SPECS,
     BaseState,
     CombatNotificationState,
     CombatState,
@@ -37,10 +38,14 @@ from core.game_session import (
     UnitState,
     ZombieGroupState,
     _commander_state_from_config,
+    _equipment_state_from_config,
     _main_objective_report_rules_from_config,
+    _organization_state_from_config,
     _reinforcement_templates_from_config,
+    _vehicle_assignments_from_config,
     create_default_game_session,
 )
+from core.model.units import UnitEquipmentState, UnitOrganizationState, VehicleAssignmentState
 from core.scenario_config import ScenarioConfig
 
 
@@ -129,8 +134,11 @@ def test_commander_state_from_config_coerces_values_and_applies_basic_default() 
         name="17",
         experience_level="basic",
     )
-    assert _commander_state_from_config({"name": "sier. Ada", "experience_level": 2}) == CommanderState(
+    assert _commander_state_from_config(
+        {"name": "sier. Ada", "rank": "sergeant", "experience_level": 2}
+    ) == CommanderState(
         name="sier. Ada",
+        rank="sergeant",
         experience_level="2",
     )
 
@@ -142,31 +150,88 @@ def test_commander_state_from_config_uses_empty_name_when_field_is_missing() -> 
     )
 
 
+def test_equipment_state_from_config_coerces_known_fields_and_defaults() -> None:
+    assert _equipment_state_from_config({}) == UnitEquipmentState()
+    assert _equipment_state_from_config(
+        {
+            "primary_weapon_key": 17,
+            "support_weapon_key": 18,
+            "vest_key": 19,
+        }
+    ) == UnitEquipmentState(
+        primary_weapon_key="17",
+        support_weapon_key="18",
+        vest_key="19",
+    )
+
+
+def test_vehicle_assignments_from_config_skips_invalid_items_and_coerces_counts() -> None:
+    assert _vehicle_assignments_from_config(None) == ()
+    assert _vehicle_assignments_from_config(
+        [
+            {"vehicle_type_id": "wheeled_apc", "count": "2"},
+            "ignored",
+            {"vehicle_type_id": 7},
+        ]
+    ) == (
+        VehicleAssignmentState(vehicle_type_id="wheeled_apc", count=2),
+        VehicleAssignmentState(vehicle_type_id="7", count=0),
+    )
+
+
+def test_organization_state_from_config_applies_defaults_and_optional_parent() -> None:
+    assert _organization_state_from_config({}) == UnitOrganizationState()
+    assert _organization_state_from_config(
+        {
+            "formation_level": "platoon",
+            "parent_unit_id": 12,
+            "subordinate_unit_ids": [1, "two"],
+            "max_subordinate_units": "3",
+        }
+    ) == UnitOrganizationState(
+        formation_level="platoon",
+        parent_unit_id="12",
+        subordinate_unit_ids=("1", "two"),
+        max_subordinate_units=3,
+    )
+    assert _organization_state_from_config({"parent_unit_id": None}).parent_unit_id is None
+
+
 def test_reinforcement_templates_match_default_scenario_contract() -> None:
     expected_templates = (
         ReinforcementTemplate(
             unit_id="charlie_infantry",
             unit_type_id="infantry_squad",
             name="3. Druzyna Charlie",
-            commander=CommanderState(name="sier. Lena Brzeg", experience_level="basic"),
+            commander=CommanderState(name="sier. Lena Brzeg", rank="sergeant", experience_level="basic"),
             experience_level="basic",
             personnel=9,
             morale=68,
             ammo=74,
             rations=12,
             fuel=0,
+            equipment=UnitEquipmentState(
+                primary_weapon_key="game.unit.armament.rifles_lmg",
+                vest_key="game.unit.vest.light_plate",
+            ),
+            organization=UnitOrganizationState(max_subordinate_units=3),
         ),
         ReinforcementTemplate(
             unit_id="delta_infantry",
             unit_type_id="infantry_squad",
             name="4. Druzyna Delta",
-            commander=CommanderState(name="sier. Oskar Lis", experience_level="basic"),
+            commander=CommanderState(name="sier. Oskar Lis", rank="sergeant", experience_level="basic"),
             experience_level="basic",
             personnel=8,
             morale=71,
             ammo=70,
             rations=10,
             fuel=0,
+            equipment=UnitEquipmentState(
+                primary_weapon_key="game.unit.armament.rifles_lmg",
+                vest_key="game.unit.vest.light_plate",
+            ),
+            organization=UnitOrganizationState(max_subordinate_units=3),
         ),
     )
 
@@ -182,6 +247,9 @@ def test_reinforcement_templates_from_config_applies_defaults_and_coercion(monke
                 {
                     "personnel": "9",
                     "commander": {"name": 5},
+                    "equipment": {"primary_weapon_key": 3},
+                    "vehicles": [{"vehicle_type_id": "wheeled_apc", "count": "2"}],
+                    "organization": {"max_subordinate_units": "3"},
                 },
                 {
                     "unit_id": 17,
@@ -194,6 +262,14 @@ def test_reinforcement_templates_from_config_applies_defaults_and_coercion(monke
                     "ammo": "13",
                     "rations": "14",
                     "fuel": "15",
+                    "equipment": {"support_weapon_key": 22, "vest_key": 23},
+                    "vehicles": ["ignored", {"vehicle_type_id": 9, "count": "1"}],
+                    "organization": {
+                        "formation_level": "platoon",
+                        "parent_unit_id": 4,
+                        "subordinate_unit_ids": [5, "6"],
+                        "max_subordinate_units": 3,
+                    },
                 },
             ),
         ),
@@ -211,6 +287,9 @@ def test_reinforcement_templates_from_config_applies_defaults_and_coercion(monke
             ammo=0,
             rations=0,
             fuel=0,
+            equipment=UnitEquipmentState(primary_weapon_key="3"),
+            vehicles=(VehicleAssignmentState(vehicle_type_id="wheeled_apc", count=2),),
+            organization=UnitOrganizationState(max_subordinate_units=3),
         ),
         ReinforcementTemplate(
             unit_id="17",
@@ -223,6 +302,14 @@ def test_reinforcement_templates_from_config_applies_defaults_and_coercion(monke
             ammo=13,
             rations=14,
             fuel=15,
+            equipment=UnitEquipmentState(support_weapon_key="22", vest_key="23"),
+            vehicles=(VehicleAssignmentState(vehicle_type_id="9", count=1),),
+            organization=UnitOrganizationState(
+                formation_level="platoon",
+                parent_unit_id="4",
+                subordinate_unit_ids=("5", "6"),
+                max_subordinate_units=3,
+            ),
         ),
     )
 
@@ -389,6 +476,9 @@ def test_initialize_units_applies_defaults_coercion_and_skips_invalid_layouts(mo
                 "ammo": "13",
                 "rations": "14",
                 "fuel": "15",
+                "equipment": {"primary_weapon_key": "rifle", "vest_key": "plate"},
+                "vehicles": [{"vehicle_type_id": "wheeled_apc", "count": "1"}],
+                "organization": {"formation_level": "squad", "max_subordinate_units": "3"},
             },
             {
                 "unit_id": "ignored",
@@ -444,6 +534,9 @@ def test_initialize_units_applies_defaults_coercion_and_skips_invalid_layouts(mo
             ammo=13,
             rations=14,
             fuel=15,
+            equipment=UnitEquipmentState(primary_weapon_key="rifle", vest_key="plate"),
+            vehicles=(VehicleAssignmentState(vehicle_type_id="wheeled_apc", count=1),),
+            organization=UnitOrganizationState(max_subordinate_units=3),
         ),
     ]
     assert session._enemy_groups == [
@@ -537,6 +630,13 @@ def test_spawn_next_reinforcement_copies_template_fields_and_marks_unit_found(mo
                 ammo=8,
                 rations=9,
                 fuel=10,
+                equipment=UnitEquipmentState(primary_weapon_key="autocannon", vest_key="medium_plate"),
+                vehicles=(VehicleAssignmentState(vehicle_type_id="wheeled_apc", count=1),),
+                organization=UnitOrganizationState(
+                    formation_level="platoon",
+                    subordinate_unit_ids=("alpha", "bravo"),
+                    max_subordinate_units=3,
+                ),
             ),
         ),
     )
@@ -559,6 +659,13 @@ def test_spawn_next_reinforcement_copies_template_fields_and_marks_unit_found(mo
             ammo=8,
             rations=9,
             fuel=10,
+            equipment=UnitEquipmentState(primary_weapon_key="autocannon", vest_key="medium_plate"),
+            vehicles=(VehicleAssignmentState(vehicle_type_id="wheeled_apc", count=1),),
+            organization=UnitOrganizationState(
+                formation_level="platoon",
+                subordinate_unit_ids=("alpha", "bravo"),
+                max_subordinate_units=3,
+            ),
         )
     ]
 
@@ -1437,8 +1544,8 @@ def test_units_snapshot_contains_expected_keys_marker_sizes_and_targets() -> Non
     assert updated_motorized["experience_level"] == "basic"
     assert updated_motorized["personnel"] == 8
     assert updated_motorized["armament_key"] == "game.unit.armament.apc_autocannon"
-    assert updated_motorized["attack"] == 7
-    assert updated_motorized["defense"] == 8
+    assert updated_motorized["attack"] == 8
+    assert updated_motorized["defense"] == 9
     assert updated_motorized["morale"] == 81
     assert updated_motorized["ammo"] == 120
     assert updated_motorized["rations"] == 24
@@ -1680,7 +1787,7 @@ def test_update_units_position_reaches_exact_step_and_continues_updating_later_u
             target=(20.0, 10.0),
         ),
     ]
-    session._movement_pixels_per_tick = lambda unit_type_id: 5.0 if unit_type_id == "mechanized_squad" else 2.0
+    session._unit_movement_pixels_per_tick = lambda unit: 5.0 if unit.unit_type_id == "mechanized_squad" else 2.0
 
     session._update_units_position()
 
@@ -1707,7 +1814,7 @@ def test_update_units_position_uses_both_axes_and_skips_zero_speed_without_stopp
             target=(23.0, 24.0),
         ),
     ]
-    session._movement_pixels_per_tick = lambda unit_type_id: 0.0 if unit_type_id == "infantry_squad" else 4.0
+    session._unit_movement_pixels_per_tick = lambda unit: 0.0 if unit.unit_type_id == "infantry_squad" else 4.0
 
     session._update_units_position()
 
@@ -1749,7 +1856,7 @@ def test_update_units_position_skips_movement_when_speed_is_zero() -> None:
             target=(200.0, 100.0),
         ),
     ]
-    session._movement_pixels_per_tick = lambda _unit_type_id: 0.0
+    session._unit_movement_pixels_per_tick = lambda _unit: 0.0
 
     session._update_units_position()
 
@@ -1841,6 +1948,43 @@ def test_movement_pixels_per_tick_matches_expected_formula() -> None:
     expected = km_per_tick / km_per_pixel
 
     assert session._movement_pixels_per_tick("infantry_squad") == expected
+
+
+def test_vehicle_assignments_increase_unit_speed_attack_and_defense() -> None:
+    session = create_default_game_session()
+    session._map_size = (960, 640)
+    mechanized = UnitState(
+        unit_id="bravo",
+        unit_type_id="mechanized_squad",
+        position=(0.0, 0.0),
+        vehicles=(VehicleAssignmentState(vehicle_type_id="wheeled_apc", count=1),),
+    )
+
+    assert session._unit_speed_kmph(mechanized) == 24.0
+    assert session._unit_attack(mechanized) == 8
+    assert session._unit_defense(mechanized) == 9
+    assert session._unit_movement_pixels_per_tick(mechanized) > session._movement_pixels_per_tick("mechanized_squad")
+
+
+def test_vehicle_bonus_helpers_ignore_unknown_types_and_negative_counts() -> None:
+    session = create_default_game_session()
+    mechanized = UnitState(
+        unit_id="bravo",
+        unit_type_id="mechanized_squad",
+        position=(0.0, 0.0),
+        vehicles=(
+            VehicleAssignmentState(vehicle_type_id="wheeled_apc", count=1),
+            VehicleAssignmentState(vehicle_type_id="unknown", count=4),
+            VehicleAssignmentState(vehicle_type_id="wheeled_apc", count=-3),
+        ),
+    )
+
+    assert (
+        session._unit_vehicle_speed_bonus_kmph(mechanized)
+        == VEHICLE_TYPE_SPECS["wheeled_apc"].transport_speed_bonus_kmph
+    )
+    assert session._unit_vehicle_attack_bonus(mechanized) == VEHICLE_TYPE_SPECS["wheeled_apc"].attack_bonus
+    assert session._unit_vehicle_defense_bonus(mechanized) == VEHICLE_TYPE_SPECS["wheeled_apc"].defense_bonus
 
 
 def test_update_supply_routes_handles_missing_units_and_invalid_destinations() -> None:
@@ -3946,13 +4090,14 @@ def test_apply_combat_attrition_uses_expected_suppression_for_infantry_and_mecha
         position=(0.0, 0.0),
         ammo=120,
         morale=81,
+        vehicles=(VehicleAssignmentState(vehicle_type_id="wheeled_apc", count=1),),
     )
     mechanized_enemy = ZombieGroupState(group_id="e2", position=(0.0, 0.0), personnel=7)
 
     session._apply_combat_attrition(mechanized, mechanized_enemy)
 
     assert mechanized_enemy.personnel == 5
-    assert mechanized.ammo == 106
+    assert mechanized.ammo == 104
     assert mechanized.morale == 80
 
 

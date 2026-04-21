@@ -1,20 +1,4 @@
-from __future__ import annotations
+from .templates.reinforcement_template import ReinforcementTemplate
 
-from dataclasses import dataclass
-
-from .commander_state import CommanderState
-
-
-@dataclass(frozen=True)
-class ReinforcementTemplate:
-    unit_id: str
-    unit_type_id: str
-    name: str
-    commander: CommanderState
-    experience_level: str
-    personnel: int
-    morale: int
-    ammo: int
-    rations: int
-    fuel: int
+__all__ = ["ReinforcementTemplate"]
 

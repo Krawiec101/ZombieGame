@@ -1,10 +1,4 @@
-from __future__ import annotations
+from .commanders.commander_state import CommanderState
 
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
-class CommanderState:
-    name: str = ""
-    experience_level: str = "basic"
+__all__ = ["CommanderState"]
 

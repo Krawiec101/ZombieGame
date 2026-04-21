@@ -45,9 +45,14 @@ from core.model.buildings import (
 )
 from core.model.units import (
     CommanderState,
+    FormationLevel,
     ReinforcementTemplate,
+    UnitEquipmentState,
+    UnitOrganizationState,
     UnitState,
     UnitTypeSpec,
+    VehicleAssignmentState,
+    VehicleTypeSpec,
 )
 from core.scenario_config import load_default_scenario_config
 from core.supply_route_manager import SupplyRouteEndpoint, SupplyRouteManager
@@ -119,7 +124,45 @@ _INITIAL_ENEMY_GROUP_LAYOUT = _DEFAULT_SCENARIO.initial_enemy_groups
 def _commander_state_from_config(config: dict[str, Any]) -> CommanderState:
     return CommanderState(
         name=str(config.get("name", "")),
+        rank=str(config.get("rank", "")),
         experience_level=str(config.get("experience_level", "basic")),
+    )
+
+
+def _equipment_state_from_config(config: dict[str, Any]) -> UnitEquipmentState:
+    return UnitEquipmentState(
+        primary_weapon_key=str(config.get("primary_weapon_key", "")),
+        support_weapon_key=str(config.get("support_weapon_key", "")),
+        vest_key=str(config.get("vest_key", "")),
+    )
+
+
+def _vehicle_assignments_from_config(value: Any) -> tuple[VehicleAssignmentState, ...]:
+    if not isinstance(value, list):
+        return ()
+    assignments: list[VehicleAssignmentState] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        assignments.append(
+            VehicleAssignmentState(
+                vehicle_type_id=str(item.get("vehicle_type_id", "")),
+                count=int(item.get("count", 0)),
+            )
+        )
+    return tuple(assignments)
+
+
+def _organization_state_from_config(config: dict[str, Any]) -> UnitOrganizationState:
+    return UnitOrganizationState(
+        formation_level=str(config.get("formation_level", FormationLevel.SQUAD)),
+        parent_unit_id=(
+            str(config["parent_unit_id"])
+            if "parent_unit_id" in config and config.get("parent_unit_id") is not None
+            else None
+        ),
+        subordinate_unit_ids=tuple(str(unit_id) for unit_id in config.get("subordinate_unit_ids", [])),
+        max_subordinate_units=int(config.get("max_subordinate_units", 0)),
     )
 
 
@@ -136,6 +179,9 @@ def _reinforcement_templates_from_config() -> tuple[ReinforcementTemplate, ...]:
             ammo=int(template.get("ammo", 0)),
             rations=int(template.get("rations", 0)),
             fuel=int(template.get("fuel", 0)),
+            equipment=_equipment_state_from_config(dict(template.get("equipment", {}))),
+            vehicles=_vehicle_assignments_from_config(template.get("vehicles")),
+            organization=_organization_state_from_config(dict(template.get("organization", {}))),
         )
         for template in _DEFAULT_SCENARIO.reinforcements
     )
@@ -180,6 +226,15 @@ UNIT_TYPE_SPECS: dict[str, UnitTypeSpec] = {
         supply_capacity=24,
         supply_load_seconds=_SUPPLY_ROUTE_LOAD_SECONDS,
         supply_unload_seconds=_SUPPLY_ROUTE_UNLOAD_SECONDS,
+    ),
+}
+
+VEHICLE_TYPE_SPECS: dict[str, VehicleTypeSpec] = {
+    "wheeled_apc": VehicleTypeSpec(
+        type_id="wheeled_apc",
+        transport_speed_bonus_kmph=6.0,
+        attack_bonus=1,
+        defense_bonus=1,
     ),
 }
 
@@ -413,9 +468,9 @@ class GameSession:
                 },
                 "experience_level": unit.experience_level,
                 "personnel": unit.personnel,
-                "armament_key": UNIT_TYPE_SPECS[unit.unit_type_id].armament_key,
-                "attack": UNIT_TYPE_SPECS[unit.unit_type_id].attack,
-                "defense": UNIT_TYPE_SPECS[unit.unit_type_id].defense,
+                "armament_key": self._unit_armament_key(unit),
+                "attack": self._unit_attack(unit),
+                "defense": self._unit_defense(unit),
                 "morale": unit.morale,
                 "ammo": unit.ammo,
                 "rations": unit.rations,
@@ -851,6 +906,8 @@ class GameSession:
             if bool(unit_layout.get("snap_to_road", False)):
                 position = self._road_anchor_for_point(position)
             commander_config = unit_layout.get("commander")
+            equipment_config = unit_layout.get("equipment")
+            organization_config = unit_layout.get("organization")
             self._units.append(
                 UnitState(
                     unit_id=str(unit_layout.get("unit_id", "")),
@@ -866,6 +923,13 @@ class GameSession:
                     ammo=int(unit_layout.get("ammo", 0)),
                     rations=int(unit_layout.get("rations", 0)),
                     fuel=int(unit_layout.get("fuel", 0)),
+                    equipment=_equipment_state_from_config(
+                        dict(equipment_config) if isinstance(equipment_config, dict) else {}
+                    ),
+                    vehicles=_vehicle_assignments_from_config(unit_layout.get("vehicles")),
+                    organization=_organization_state_from_config(
+                        dict(organization_config) if isinstance(organization_config, dict) else {}
+                    ),
                 )
             )
 
@@ -964,6 +1028,9 @@ class GameSession:
                 ammo=next_template.ammo,
                 rations=next_template.rations,
                 fuel=next_template.fuel,
+                equipment=next_template.equipment,
+                vehicles=next_template.vehicles,
+                organization=next_template.organization,
             )
         )
         self._found_reinforcement_unit_ids.add(next_template.unit_id)
@@ -1086,13 +1153,12 @@ class GameSession:
             if unit.target is None:
                 continue
 
-            speed_px_per_tick = self._movement_pixels_per_tick(unit.unit_type_id)
             def clamp_position(
                 position: tuple[float, float],
                 unit_type_id: str = unit.unit_type_id,
             ) -> tuple[float, float]:
                 return self._clamp_point_to_map(position, unit_type_id=unit_type_id)
-
+            speed_px_per_tick = self._unit_movement_pixels_per_tick(unit)
             unit.advance_towards_target(
                 speed_px_per_tick=speed_px_per_tick,
                 clamp_position=clamp_position,
@@ -1119,7 +1185,7 @@ class GameSession:
 
     def _combat_duration_seconds(self, unit: UnitState, enemy_group: ZombieGroupState) -> float:
         enemy_strength = max(1, int(enemy_group.personnel))
-        suppression = max(1, int(UNIT_TYPE_SPECS[unit.unit_type_id].attack) // 3)
+        suppression = max(1, int(self._unit_attack(unit)) // 3)
         expected_exchanges = math.ceil(enemy_strength / suppression)
         return min(
             _COMBAT_MAX_DURATION_SECONDS,
@@ -1127,10 +1193,13 @@ class GameSession:
         )
 
     def _apply_combat_attrition(self, unit: UnitState, enemy_group: ZombieGroupState) -> None:
-        suppression = max(1, int(UNIT_TYPE_SPECS[unit.unit_type_id].attack) // 3)
+        attack_strength = self._unit_attack(unit)
+        suppression = max(1, int(attack_strength) // 3)
         enemy_group.personnel = max(0, enemy_group.personnel - suppression)
-        unit.ammo = max(0, unit.ammo - max(4, UNIT_TYPE_SPECS[unit.unit_type_id].attack * 2))
-        unit.morale = max(0, unit.morale - max(1, math.ceil(enemy_group.personnel / 5)))
+        unit.ammo = max(0, unit.ammo - max(4, attack_strength * 2))
+        incoming_pressure = math.ceil(enemy_group.personnel / 5)
+        defense_offset = max(0, self._unit_defense(unit) // 8)
+        unit.morale = max(0, unit.morale - max(1, incoming_pressure - defense_offset))
 
     def _resolve_combat(self, combat: CombatState) -> None:
         self._combats.pop(combat.combat_id, None)
@@ -1389,11 +1458,55 @@ class GameSession:
         if width <= 0:
             return 0.0
         speed_kmph = UNIT_TYPE_SPECS[unit_type_id].speed_kmph
+        return self._pixels_per_tick_from_speed_kmph(speed_kmph)
+
+    def _unit_movement_pixels_per_tick(self, unit: UnitState) -> float:
+        return self._pixels_per_tick_from_speed_kmph(self._unit_speed_kmph(unit))
+
+    def _pixels_per_tick_from_speed_kmph(self, speed_kmph: float) -> float:
+        width, _height = self._map_size
+        if width <= 0:
+            return 0.0
         km_per_tick = (speed_kmph / 3600.0) * _SIMULATION_SECONDS_PER_TICK
         km_per_pixel = _MAP_WIDTH_KM / float(width)
         if km_per_pixel <= 0:
             return 0.0
         return km_per_tick / km_per_pixel
+
+    def _unit_armament_key(self, unit: UnitState) -> str:
+        if unit.equipment.primary_weapon_key:
+            return unit.equipment.primary_weapon_key
+        return UNIT_TYPE_SPECS[unit.unit_type_id].armament_key
+
+    def _unit_speed_kmph(self, unit: UnitState) -> float:
+        return UNIT_TYPE_SPECS[unit.unit_type_id].speed_kmph + self._unit_vehicle_speed_bonus_kmph(unit)
+
+    def _unit_attack(self, unit: UnitState) -> int:
+        return UNIT_TYPE_SPECS[unit.unit_type_id].attack + self._unit_vehicle_attack_bonus(unit)
+
+    def _unit_defense(self, unit: UnitState) -> int:
+        return UNIT_TYPE_SPECS[unit.unit_type_id].defense + self._unit_vehicle_defense_bonus(unit)
+
+    def _unit_vehicle_speed_bonus_kmph(self, unit: UnitState) -> float:
+        return sum(
+            VEHICLE_TYPE_SPECS.get(vehicle.vehicle_type_id, VehicleTypeSpec(type_id="")).transport_speed_bonus_kmph
+            * max(0, int(vehicle.count))
+            for vehicle in unit.vehicles
+        )
+
+    def _unit_vehicle_attack_bonus(self, unit: UnitState) -> int:
+        return sum(
+            VEHICLE_TYPE_SPECS.get(vehicle.vehicle_type_id, VehicleTypeSpec(type_id="")).attack_bonus
+            * max(0, int(vehicle.count))
+            for vehicle in unit.vehicles
+        )
+
+    def _unit_vehicle_defense_bonus(self, unit: UnitState) -> int:
+        return sum(
+            VEHICLE_TYPE_SPECS.get(vehicle.vehicle_type_id, VehicleTypeSpec(type_id="")).defense_bonus
+            * max(0, int(vehicle.count))
+            for vehicle in unit.vehicles
+        )
 
     def _point_in_map(self, position: tuple[int, int]) -> bool:
         width, height = self._map_size

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 
 from core.scenario_config import (
+    _mapping,
+    _mapping_sequence,
     _select_mission_definition,
     _select_stage_definition,
     load_default_scenario_config,
@@ -54,6 +56,9 @@ def test_default_scenario_config_starts_all_commanders_as_sergeants_with_basic_e
     commander_names = [
         unit["commander"]["name"] for unit in (*scenario.initial_units, *scenario.reinforcements)
     ]
+    commander_ranks = [
+        unit["commander"]["rank"] for unit in (*scenario.initial_units, *scenario.reinforcements)
+    ]
     commander_experience_levels = [
         unit["commander"]["experience_level"] for unit in (*scenario.initial_units, *scenario.reinforcements)
     ]
@@ -67,6 +72,7 @@ def test_default_scenario_config_starts_all_commanders_as_sergeants_with_basic_e
         "sier. Lena Brzeg",
         "sier. Oskar Lis",
     ]
+    assert commander_ranks == ["sergeant", "sergeant", "sergeant", "sergeant"]
     assert commander_experience_levels == ["basic", "basic", "basic", "basic"]
     assert unit_experience_levels == ["basic", "basic", "basic", "basic"]
 
@@ -261,7 +267,6 @@ def test_scenario_config_uses_empty_defaults_when_sections_have_wrong_shape(monk
     assert scenario.mission_reports == ()
     assert scenario.stage_events == ()
 
-
 def test_load_default_scenario_config_forwards_explicit_selector_arguments(monkeypatch) -> None:
     recorded_call: dict[str, object] = {}
 
@@ -403,3 +408,37 @@ def test_select_stage_definition_distinguishes_missing_id_from_literal_none_and_
         _select_stage_definition(stage_definitions, stage_id="XXXX")["label"]
         == "literal-xxxx"
     )
+
+
+def test_load_default_scenario_config_forwards_requested_mission_and_stage(monkeypatch) -> None:
+    calls: list[tuple[object, str | None, str | None]] = []
+
+    def fake_loader(path, *, mission_id=None, stage_id=None):
+        calls.append((path, mission_id, stage_id))
+        return "loaded"
+
+    monkeypatch.setattr("core.scenario_config.load_scenario_config", fake_loader)
+
+    assert load_default_scenario_config(mission_id="mission_x", stage_id="stage_y") == "loaded"
+    assert len(calls) == 1
+    assert calls[0][1:] == ("mission_x", "stage_y")
+
+
+def test_select_helpers_return_match_first_entry_or_empty_mapping() -> None:
+    missions = ({"mission_id": "alpha"}, {"mission_id": "bravo"})
+    stages = ({"stage_id": "stage_1"}, {"stage_id": "stage_2"})
+
+    assert _select_mission_definition(missions, mission_id="bravo") == {"mission_id": "bravo"}
+    assert _select_mission_definition(missions, mission_id="missing") == {"mission_id": "alpha"}
+    assert _select_mission_definition((), mission_id="missing") == {}
+
+    assert _select_stage_definition(stages, stage_id="stage_2") == {"stage_id": "stage_2"}
+    assert _select_stage_definition(stages, stage_id="missing") == {"stage_id": "stage_1"}
+    assert _select_stage_definition((), stage_id="missing") == {}
+
+
+def test_mapping_helpers_coerce_dict_keys_and_ignore_wrong_container_shapes() -> None:
+    assert _mapping({"a": 1, 2: 3}) == {"a": 1, "2": 3}
+    assert _mapping(["wrong"]) == {}
+    assert _mapping_sequence([{"a": 1}, {2: 3}, "bad"]) == ({"a": 1}, {"2": 3}, {})
+    assert _mapping_sequence("wrong") == ()

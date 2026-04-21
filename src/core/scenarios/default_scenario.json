@@ -172,6 +172,7 @@
                 "name": "1. Druzyna Alfa",
                 "commander": {
                   "name": "sier. Anna Sowa",
+                  "rank": "sergeant",
                   "experience_level": "basic"
                 },
                 "experience_level": "basic",
@@ -179,7 +180,15 @@
                 "morale": 72,
                 "ammo": 90,
                 "rations": 18,
-                "fuel": 0
+                "fuel": 0,
+                "equipment": {
+                  "primary_weapon_key": "game.unit.armament.rifles_lmg",
+                  "vest_key": "game.unit.vest.light_plate"
+                },
+                "organization": {
+                  "formation_level": "squad",
+                  "max_subordinate_units": 3
+                }
               },
               {
                 "unit_id": "bravo_mechanized",
@@ -191,6 +200,7 @@
                 "name": "2. Sekcja Bravo",
                 "commander": {
                   "name": "sier. Marek Wolny",
+                  "rank": "sergeant",
                   "experience_level": "basic"
                 },
                 "experience_level": "basic",
@@ -198,7 +208,21 @@
                 "morale": 81,
                 "ammo": 120,
                 "rations": 24,
-                "fuel": 65
+                "fuel": 65,
+                "equipment": {
+                  "primary_weapon_key": "game.unit.armament.apc_autocannon",
+                  "vest_key": "game.unit.vest.medium_plate"
+                },
+                "vehicles": [
+                  {
+                    "vehicle_type_id": "wheeled_apc",
+                    "count": 1
+                  }
+                ],
+                "organization": {
+                  "formation_level": "squad",
+                  "max_subordinate_units": 3
+                }
               }
             ],
             "enemy_groups": [
@@ -216,6 +240,7 @@
                 "name": "3. Druzyna Charlie",
                 "commander": {
                   "name": "sier. Lena Brzeg",
+                  "rank": "sergeant",
                   "experience_level": "basic"
                 },
                 "experience_level": "basic",
@@ -223,7 +248,15 @@
                 "morale": 68,
                 "ammo": 74,
                 "rations": 12,
-                "fuel": 0
+                "fuel": 0,
+                "equipment": {
+                  "primary_weapon_key": "game.unit.armament.rifles_lmg",
+                  "vest_key": "game.unit.vest.light_plate"
+                },
+                "organization": {
+                  "formation_level": "squad",
+                  "max_subordinate_units": 3
+                }
               },
               {
                 "unit_id": "delta_infantry",
@@ -231,6 +264,7 @@
                 "name": "4. Druzyna Delta",
                 "commander": {
                   "name": "sier. Oskar Lis",
+                  "rank": "sergeant",
                   "experience_level": "basic"
                 },
                 "experience_level": "basic",
@@ -238,7 +272,15 @@
                 "morale": 71,
                 "ammo": 70,
                 "rations": 10,
-                "fuel": 0
+                "fuel": 0,
+                "equipment": {
+                  "primary_weapon_key": "game.unit.armament.rifles_lmg",
+                  "vest_key": "game.unit.vest.light_plate"
+                },
+                "organization": {
+                  "formation_level": "squad",
+                  "max_subordinate_units": 3
+                }
               }
             ]
           }
@@ -306,6 +348,7 @@
                 "name": "1. Druzyna Alfa",
                 "commander": {
                   "name": "sier. Anna Sowa",
+                  "rank": "sergeant",
                   "experience_level": "basic"
                 },
                 "experience_level": "basic",
@@ -313,7 +356,15 @@
                 "morale": 70,
                 "ammo": 78,
                 "rations": 14,
-                "fuel": 0
+                "fuel": 0,
+                "equipment": {
+                  "primary_weapon_key": "game.unit.armament.rifles_lmg",
+                  "vest_key": "game.unit.vest.light_plate"
+                },
+                "organization": {
+                  "formation_level": "squad",
+                  "max_subordinate_units": 3
+                }
               }
             ],
             "enemy_groups": [
