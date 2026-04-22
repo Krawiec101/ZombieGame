@@ -111,7 +111,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          docker compose run --rm app pytest tests --ignore=mutants --ignore=tests/architecture --cov=src --cov-fail-under=95 --cov-report=term-missing --cov-report=xml:coverage.xml > pytest-coverage.txt
+          docker compose run --rm app pytest tests --ignore=mutants --ignore=tests/architecture --cov=src --cov-fail-under=96 --cov-report=term-missing --cov-report=xml:coverage.xml > pytest-coverage.txt
           cat pytest-coverage.txt
 
           COVERAGE_LINE=$(grep -E "^TOTAL" pytest-coverage.txt | tail -n 1)
@@ -121,7 +121,7 @@ jobs:
             echo "## Test coverage"
             echo ""
             echo "Total coverage: **$COVERAGE_VALUE**"
-            echo "Threshold: **>= 95%**"
+            echo "Threshold: **>= 96%**"
             echo ""
             echo '```'
             cat pytest-coverage.txt
@@ -190,7 +190,7 @@ jobs:
           import sys
           from pathlib import Path
 
-          min_score_exclusive = 92.0
+          min_score_exclusive = 93.0
           max_suspicious = 0
           max_timeout = 1
 
