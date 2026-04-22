@@ -18,7 +18,7 @@ try {
     docker compose run --rm typecheck
 
     Write-Host "==> pytest + coverage"
-    $pytestOutput = docker compose run --rm app pytest tests --ignore=mutants --ignore=tests/architecture --cov=src --cov-fail-under=95 --cov-report=term-missing --cov-report=xml:coverage.xml
+    $pytestOutput = docker compose run --rm app pytest tests --ignore=mutants --ignore=tests/architecture --cov=src --cov-fail-under=96 --cov-report=term-missing --cov-report=xml:coverage.xml
     $pytestOutput | Set-Content -Path "pytest-coverage.txt"
     $pytestOutput
 
@@ -49,8 +49,8 @@ try {
     }
 
     $score = [math]::Round(($killed / $total) * 100, 1)
-    if ($score -le 92.0) {
-        throw "Mutation score $score% <= 92.0%"
+    if ($score -le 93.0) {
+        throw "Mutation score $score% <= 93.0%"
     }
     if ($suspicious -gt 0) {
         throw "Suspicious mutants $suspicious > 0"

@@ -93,7 +93,7 @@ docker compose build
 docker compose run --rm sca
 docker compose run --rm lint
 docker compose run --rm typecheck
-docker compose run --rm app pytest tests --ignore=mutants --ignore=tests/architecture --cov=src --cov-fail-under=95 --cov-report=term-missing --cov-report=xml:coverage.xml
+docker compose run --rm app pytest tests --ignore=mutants --ignore=tests/architecture --cov=src --cov-fail-under=96 --cov-report=term-missing --cov-report=xml:coverage.xml
 docker compose run --rm app python scripts/ci/crap_gate.py --coverage-xml coverage.xml --source-dir src --summary-md crap-summary.md
 docker compose run --rm app pytest -q tests/architecture
 docker compose run --rm app mutmut run
@@ -119,11 +119,11 @@ Tryb podgladu bez usuwania:
 Pipeline CI uruchamia `pytest` z `pytest-cov` dla testow funkcjonalnych/jednostkowych oraz osobny krok dla testow architektury (`tests/architecture`, PyTestArch). Podsumowania sa publikowane w zakladce `Checks` (GitHub Step Summary).
 
 Globalna bramka coverage jest twarda:
-- wymagane pokrycie: `>= 95%`
+- wymagane pokrycie: `>= 96%`
 
 Po kroku coverage dziala tez bramka CRAP (Change Risk Anti-Patterns), liczona na podstawie `coverage.xml` i cyclomatic complexity z `radon`.
 Progi startowe w CI:
-- `max_crap_per_function = 12.0`
+- `max_crap_per_function = 11.1`
 - `max_high_crap_functions = 0`
 - `min_coverage_for_high_complexity = 80%`
 - `high_complexity_threshold = 15`
@@ -142,7 +142,7 @@ Wazne: `mutmut` przechowuje wyniki w katalogu `mutants`, wiec do wiernego odtwor
 Bez usuniecia tego katalogu lokalny wynik moze byc tylko przyrostowy i nie pokaze rzeczywistej pelnej bramki mutacyjnej.
 
 W CI jest ustawiona bramka jakosci mutacji:
-- wymagany `mutation score`: `> 92%`
+- wymagany `mutation score`: `> 93%`
 - `suspicious`: `0`
 - `timeout`: `1`
 

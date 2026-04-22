@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from contracts.game_state import (
@@ -18,15 +17,32 @@ from contracts.game_state import (
     UnitSnapshot,
     ZombieGroupSnapshot,
 )
+from ui.game_views.geometry import (
+    first_map_object_at,
+    map_object_center,
+    point_in_bounds,
+    polyline_midpoint,
+    road_anchor_for_point,
+    supply_route_points,
+)
+from ui.game_views.view_content import (
+    TooltipContent,
+    base_detail_lines,
+    build_enemy_group_tooltip,
+    build_map_object_tooltip,
+    build_mission_objective_lines,
+    build_unit_tooltip,
+    combat_detail_lines_for_unit,
+    landing_pad_detail_lines,
+    landing_pad_status_line,
+    map_object_text_keys,
+    transport_type_label,
+)
 from ui.i18n import text
 
 _MAP_OBJECT_STYLES: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
     "hq": ((76, 116, 158), (184, 200, 215)),
     "landing_pad": ((124, 146, 88), (184, 200, 215)),
-}
-_MAP_OBJECT_TEXT_KEYS: dict[str, tuple[str, str]] = {
-    "hq": ("game.map.object.hq.name", "game.map.object.hq.description"),
-    "landing_pad": ("game.map.object.landing_pad.name", "game.map.object.landing_pad.description"),
 }
 _UNIT_MARKER_STYLES: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
     "infantry_squad": ((208, 186, 104), (78, 66, 28)),
@@ -44,10 +60,6 @@ _COMBAT_ALERT_STYLE = {
     "subtle": (174, 184, 162),
 }
 _COMBAT_MARKER_COLOR = (214, 124, 74)
-_UNIT_TYPE_TEXT_KEYS = {
-    "infantry_squad": "game.unit.type.infantry_squad",
-    "mechanized_squad": "game.unit.type.mechanized_squad",
-}
 _SUPPLY_TRANSPORT_STYLES: dict[str, dict[str, Any]] = {
     "light_supply_helicopter": {
         "fill": (167, 196, 142),
@@ -60,26 +72,7 @@ _SUPPLY_TRANSPORT_STYLES: dict[str, dict[str, Any]] = {
         "size": (38, 14),
     },
 }
-_LANDING_PAD_SIZE_TEXT_KEYS = {
-    "small": "game.map.object.landing_pad.size.small",
-    "large": "game.map.object.landing_pad.size.large",
-}
-_RESOURCE_TEXT_KEYS = {
-    "fuel": "resource.fuel",
-    "mre": "resource.mre",
-    "ammo": "resource.ammo",
-}
-_TRANSPORT_TYPE_TEXT_KEYS = {
-    "light_supply_helicopter": "game.transport.type.light_supply_helicopter",
-    "heavy_supply_helicopter": "game.transport.type.heavy_supply_helicopter",
-}
-_LANDING_PAD_TRANSPORT_STATUS_TEXT_KEYS = {
-    "inbound": "game.map.object.landing_pad.status.inbound",
-    "unloading": "game.map.object.landing_pad.status.unloading",
-    "outbound": "game.map.object.landing_pad.status.outbound",
-}
 _RECON_SITE_STYLE = ((132, 110, 84), (214, 192, 146))
-_RECON_SITE_TEXT_KEYS = ("game.map.object.recon_site.name", "game.map.object.recon_site.description")
 
 
 class PygameGameView:
@@ -179,9 +172,9 @@ class PygameGameView:
             tooltip = self._tooltip_content_for_unit(hovered_unit)
             self._draw_object_tooltip(
                 target_rect=self._get_unit_rect(hovered_unit),
-                title=tooltip["title"],
-                description=tooltip["description"],
-                detail_lines=tooltip["detail_lines"],
+                title=tooltip.title,
+                description=tooltip.description,
+                detail_lines=tooltip.detail_lines,
             )
             return
 
@@ -190,9 +183,9 @@ class PygameGameView:
             tooltip = self._tooltip_content_for_enemy_group(hovered_enemy_group)
             self._draw_object_tooltip(
                 target_rect=self._get_enemy_group_rect(hovered_enemy_group),
-                title=tooltip["title"],
-                description=tooltip["description"],
-                detail_lines=tooltip["detail_lines"],
+                title=tooltip.title,
+                description=tooltip.description,
+                detail_lines=tooltip.detail_lines,
             )
             return
 
@@ -202,9 +195,9 @@ class PygameGameView:
             if object_tooltip is not None:
                 self._draw_object_tooltip(
                     target_rect=self._rect_from_bounds(hovered_object.bounds),
-                    title=object_tooltip["title"],
-                    description=object_tooltip["description"],
-                    detail_lines=object_tooltip["detail_lines"],
+                    title=object_tooltip.title,
+                    description=object_tooltip.description,
+                    detail_lines=object_tooltip.detail_lines,
                 )
 
     def _draw_map_area(self) -> Any:
@@ -355,14 +348,17 @@ class PygameGameView:
 
         pygame = self._pygame
         title_surface = self._font_hint.render(text("mission.objectives.title"), True, (236, 241, 246))
-        line_entries: list[tuple[Any, bool]] = []
-        for objective in self._mission_objectives:
-            objective_id = objective.objective_id
-            is_completed = self._mission_objective_status.get(objective_id, False)
-            checkbox = "[x]" if is_completed else "[ ]"
-            label = text(objective.description_key)
-            line_color = (142, 150, 160) if is_completed else (212, 222, 232)
-            line_entries.append((self._font_hint.render(f"{checkbox} {label}", True, line_color), is_completed))
+        line_entries = [
+            (
+                self._font_hint.render(line.text, True, line.color),
+                line.is_completed,
+            )
+            for line in build_mission_objective_lines(
+                self._mission_objectives,
+                self._mission_objective_status,
+                text=text,
+            )
+        ]
 
         padding = 8
         line_gap = 6
@@ -494,10 +490,7 @@ class PygameGameView:
         return bool(unit_rect.collidepoint(position))
 
     def map_object_at(self, position: tuple[int, int]) -> MapObjectSnapshot | None:
-        for map_object in self._map_objects:
-            if self._point_in_bounds(position, map_object.bounds):
-                return map_object
-        return None
+        return first_map_object_at(position, self._map_objects)
 
     def supply_route_source_candidates(self) -> tuple[str, ...]:
         return tuple(
@@ -524,10 +517,7 @@ class PygameGameView:
 
     def _find_hovered_map_object(self) -> MapObjectSnapshot | None:
         mouse_x, mouse_y = self._get_mouse_position()
-        for map_object in self._map_objects:
-            if self._point_in_bounds((mouse_x, mouse_y), map_object.bounds):
-                return map_object
-        return None
+        return first_map_object_at((mouse_x, mouse_y), self._map_objects)
 
     def _find_hovered_unit(self) -> UnitSnapshot | None:
         mouse_position = self._get_mouse_position()
@@ -553,9 +543,7 @@ class PygameGameView:
         return (int(position[0]), int(position[1]))
 
     def _point_in_bounds(self, position: tuple[int, int], bounds: tuple[int, int, int, int]) -> bool:
-        x, y = position
-        left, top, right, bottom = bounds
-        return left <= x <= right and top <= y <= bottom
+        return point_in_bounds(position, bounds)
 
     def _rect_from_bounds(self, bounds: tuple[int, int, int, int]) -> Any:
         pygame = self._pygame
@@ -569,68 +557,20 @@ class PygameGameView:
         return pygame.Rect(left, top, width, height)
 
     def _map_object_center(self, object_id: str) -> tuple[float, float]:
-        map_object = next((item for item in self._map_objects if item.object_id == object_id), None)
-        if map_object is None:
-            return (0.0, 0.0)
-        left, top, right, bottom = map_object.bounds
-        return ((left + right) / 2.0, (top + bottom) / 2.0)
+        return map_object_center(self._map_objects, object_id)
 
     def _supply_route_points(self, route: SupplyRouteSnapshot) -> tuple[tuple[float, float], ...]:
-        start = self._map_object_center(route.source_object_id)
-        end = self._map_object_center(route.destination_object_id)
-        if not self._roads:
-            return (start, end)
-
-        road_points = self._roads[0].points
-        if len(road_points) < 2:
-            return (start, end)
-
-        start_anchor = self._road_anchor_for_point(start, road_points)
-        end_anchor = self._road_anchor_for_point(end, road_points)
-        start_index = road_points.index(start_anchor)
-        end_index = road_points.index(end_anchor)
-        if start_index <= end_index:
-            return road_points[start_index : end_index + 1]
-        return tuple(reversed(road_points[end_index : start_index + 1]))
+        return supply_route_points(route, map_objects=self._map_objects, roads=self._roads)
 
     def _road_anchor_for_point(
         self,
         point: tuple[float, float],
         road_points: tuple[tuple[float, float], ...],
     ) -> tuple[float, float]:
-        return min(
-            road_points,
-            key=lambda road_point: math.hypot(road_point[0] - point[0], road_point[1] - point[1]),
-        )
+        return road_anchor_for_point(point, road_points)
 
     def _polyline_midpoint(self, points: tuple[tuple[float, float], ...]) -> tuple[float, float]:
-        if not points:
-            return (0.0, 0.0)
-        if len(points) == 1:
-            return points[0]
-
-        segment_lengths = [
-            math.hypot(end[0] - start[0], end[1] - start[1])
-            for start, end in zip(points, points[1:], strict=False)
-        ]
-        total_length = sum(segment_lengths)
-        if total_length <= 0:
-            return points[len(points) // 2]
-
-        halfway = total_length / 2.0
-        traveled = 0.0
-        for index, segment_length in enumerate(segment_lengths):
-            if traveled + segment_length >= halfway:
-                start = points[index]
-                end = points[index + 1]
-                progress = 0.0 if segment_length <= 0 else (halfway - traveled) / segment_length
-                return (
-                    start[0] + (end[0] - start[0]) * progress,
-                    start[1] + (end[1] - start[1]) * progress,
-                )
-            traveled += segment_length
-
-        return points[-1]
+        return polyline_midpoint(points)
 
     def _draw_supply_route_planning_overlay(self, planning_state: dict[str, Any]) -> None:
         pygame = self._pygame
@@ -658,153 +598,34 @@ class PygameGameView:
         pygame.draw.rect(self._screen, (118, 126, 144), instruction_rect, 2, border_radius=6)
         self._screen.blit(instruction_surface, (instruction_rect.left + 12, instruction_rect.top + 8))
 
-    def _tooltip_content_for_map_object(self, map_object: MapObjectSnapshot) -> dict[str, Any] | None:
-        keys = self._map_object_text_keys(map_object.object_id)
-        if keys is None:
-            return None
+    def _tooltip_content_for_map_object(self, map_object: MapObjectSnapshot) -> TooltipContent | None:
+        return build_map_object_tooltip(
+            map_object,
+            landing_pad=self._landing_pads.get(map_object.object_id),
+            base=self._bases.get(map_object.object_id),
+            text=text,
+        )
 
-        detail_lines: tuple[str, ...] = ()
-        landing_pad = self._landing_pads.get(map_object.object_id)
-        if landing_pad is not None:
-            detail_lines = self._landing_pad_detail_lines(landing_pad)
-        else:
-            base = self._bases.get(map_object.object_id)
-            if base is not None:
-                detail_lines = self._base_detail_lines(base)
+    def _tooltip_content_for_unit(self, unit: UnitSnapshot) -> TooltipContent:
+        return build_unit_tooltip(unit, text=text)
 
-        return {
-            "title": text(keys[0]),
-            "description": text(keys[1]),
-            "detail_lines": detail_lines,
-        }
-
-    def _tooltip_content_for_unit(self, unit: UnitSnapshot) -> dict[str, Any]:
-        return {
-            "title": unit.name or unit.unit_id,
-            "description": text(
-                _UNIT_TYPE_TEXT_KEYS.get(unit.unit_type_id, "game.unit.type.unknown")
-            ),
-            "detail_lines": (
-                *self._combat_detail_lines_for_unit(unit),
-                text(
-                    "game.unit.commander",
-                    name=unit.commander.name,
-                    experience=text(f"game.experience.{unit.commander.experience_level}"),
-                ),
-                text(
-                    "game.unit.experience",
-                    experience=text(f"game.experience.{unit.experience_level}"),
-                ),
-                text("game.unit.personnel", value=unit.personnel),
-                text("game.unit.armament", value=text(unit.armament_key)),
-                text("game.unit.attack", value=unit.attack),
-                text("game.unit.defense", value=unit.defense),
-                text("game.unit.morale", value=unit.morale),
-                text("game.unit.ammo", value=unit.ammo),
-                text("game.unit.rations", value=unit.rations),
-                text("game.unit.fuel", value=unit.fuel),
-            ),
-        }
-
-    def _tooltip_content_for_enemy_group(self, enemy_group: ZombieGroupSnapshot) -> dict[str, Any]:
-        return {
-            "title": enemy_group.name or enemy_group.group_id,
-            "description": text("game.enemy_group.type.zombies"),
-            "detail_lines": (
-                text("game.enemy_group.status.engaged")
-                if enemy_group.is_in_combat
-                else text("game.enemy_group.status.idle"),
-                text("game.enemy_group.personnel", value=enemy_group.personnel),
-            ),
-        }
+    def _tooltip_content_for_enemy_group(self, enemy_group: ZombieGroupSnapshot) -> TooltipContent:
+        return build_enemy_group_tooltip(enemy_group, text=text)
 
     def _combat_detail_lines_for_unit(self, unit: UnitSnapshot) -> tuple[str, ...]:
-        if not unit.is_in_combat:
-            return ()
-        return (
-            text(
-                "game.unit.status.engaged",
-                seconds=unit.combat_seconds_remaining or 0,
-            ),
-        )
+        return combat_detail_lines_for_unit(unit, text=text)
 
     def _base_detail_lines(self, base: BaseSnapshot) -> tuple[str, ...]:
-        lines = [
-            text("game.map.object.hq.status"),
-            text(
-                "game.map.object.hq.capacity",
-                stored=base.total_stored,
-                capacity=base.capacity,
-            ),
-        ]
-        for resource in base.resources:
-            lines.append(
-                text(
-                    "game.map.object.hq.resource_line",
-                    label=text(_RESOURCE_TEXT_KEYS.get(resource.resource_id, resource.resource_id)),
-                    amount=resource.amount,
-                )
-            )
-        return tuple(lines)
+        return base_detail_lines(base, text=text)
 
     def _landing_pad_detail_lines(self, landing_pad: LandingPadSnapshot) -> tuple[str, ...]:
-        lines = [
-            self._landing_pad_status_line(landing_pad),
-            text(
-                "game.map.object.landing_pad.size",
-                size=text(
-                    _LANDING_PAD_SIZE_TEXT_KEYS.get(
-                        landing_pad.pad_size,
-                        "game.map.object.landing_pad.size.small",
-                    )
-                ),
-            ),
-            text(
-                "game.map.object.landing_pad.capacity",
-                stored=landing_pad.total_stored,
-                capacity=landing_pad.capacity,
-            ),
-        ]
-        for resource in landing_pad.resources:
-            lines.append(
-                text(
-                    "game.map.object.landing_pad.resource_line",
-                    label=text(_RESOURCE_TEXT_KEYS.get(resource.resource_id, resource.resource_id)),
-                    amount=resource.amount,
-                )
-            )
-        return tuple(lines)
+        return landing_pad_detail_lines(landing_pad, text=text)
 
     def _landing_pad_status_line(self, landing_pad: LandingPadSnapshot) -> str:
-        if not landing_pad.is_secured:
-            return text("game.map.object.landing_pad.status.unsecured")
-
-        transport_phase = landing_pad.active_transport_phase
-        transport_status_key = (
-            _LANDING_PAD_TRANSPORT_STATUS_TEXT_KEYS.get(transport_phase) if transport_phase is not None else None
-        )
-        if transport_status_key is not None:
-            return text(
-                transport_status_key,
-                helicopter=self._transport_type_label(landing_pad.active_transport_type_id),
-                seconds=landing_pad.active_transport_seconds_remaining or 0,
-            )
-
-        if landing_pad.total_stored >= landing_pad.capacity:
-            return text("game.map.object.landing_pad.status.full")
-
-        if landing_pad.next_transport_seconds is not None:
-            return text(
-                "game.map.object.landing_pad.status.next_transport",
-                seconds=landing_pad.next_transport_seconds,
-            )
-
-        return text("game.map.object.landing_pad.status.awaiting")
+        return landing_pad_status_line(landing_pad, text=text)
 
     def _transport_type_label(self, transport_type_id: str | None) -> str:
-        if transport_type_id is None:
-            return text("game.transport.type.unknown")
-        return text(_TRANSPORT_TYPE_TEXT_KEYS.get(transport_type_id, "game.transport.type.unknown"))
+        return transport_type_label(transport_type_id, text=text)
 
     def _map_object_style(self, object_id: str) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
         if object_id.startswith("recon_site_"):
@@ -812,9 +633,7 @@ class PygameGameView:
         return _MAP_OBJECT_STYLES.get(object_id, ((95, 113, 129), (184, 200, 215)))
 
     def _map_object_text_keys(self, object_id: str) -> tuple[str, str] | None:
-        if object_id.startswith("recon_site_"):
-            return _RECON_SITE_TEXT_KEYS
-        return _MAP_OBJECT_TEXT_KEYS.get(object_id)
+        return map_object_text_keys(object_id)
 
     def _draw_object_tooltip(
         self,

@@ -20,6 +20,13 @@ from contracts.events import (
 )
 from ui.game_views.pygame_game_view import PygameGameView
 from ui.i18n import text
+from ui.menus.input_helpers import (
+    game_context_menu_action_from_key,
+    hitbox_action_at,
+    resolve_name_modal_input,
+    should_dismiss_modal_from_click,
+    should_dismiss_report_modal,
+)
 
 _MENU_OPTION_LABEL_KEYS = {
     "1": "main_menu.option.new_game",
@@ -467,39 +474,26 @@ class PygameMainMenuView:
     def _handle_game_context_menu_event(self, pygame_event: Any, events: list[UIEvent]) -> None:
         pygame = self._pygame
         if pygame_event.type == pygame.MOUSEBUTTONDOWN and pygame_event.button == 1:
-            for action, hitbox in self._context_menu_hitboxes.items():
-                if hitbox.collidepoint(pygame_event.pos):
-                    self._handle_context_menu_action(action, events)
-                    break
+            action = hitbox_action_at(self._context_menu_hitboxes, pygame_event.pos)
+            if action is not None:
+                self._handle_context_menu_action(action, events)
             return
 
         if pygame_event.type != pygame.KEYDOWN:
             return
 
-        if pygame_event.key == pygame.K_ESCAPE:
-            self._close_game_context_menu()
-            return
-
-        if pygame_event.key in (pygame.K_1, pygame.K_KP1):
-            self._handle_context_menu_action("resume", events)
-            return
-
-        if pygame_event.key in (pygame.K_2, pygame.K_KP2):
-            self._handle_context_menu_action("to_menu", events)
-            return
-
-        if pygame_event.key in (pygame.K_3, pygame.K_KP3):
-            self._handle_context_menu_action("exit", events)
+        action = game_context_menu_action_from_key(pygame, pygame_event.key)
+        if action is not None:
+            self._handle_context_menu_action(action, events)
 
     def _handle_unit_context_menu_event(self, pygame_event: Any, events: list[UIEvent]) -> None:
         pygame = self._pygame
         if pygame_event.type == pygame.MOUSEBUTTONDOWN:
             if pygame_event.button == 1:
-                for action, hitbox in self._unit_context_menu_hitboxes.items():
-                    if hitbox.collidepoint(pygame_event.pos):
-                        if action == "create_supply_route":
-                            self._begin_supply_route_planning()
-                        return
+                action = hitbox_action_at(self._unit_context_menu_hitboxes, pygame_event.pos)
+                if action == "create_supply_route":
+                    self._begin_supply_route_planning()
+                    return
                 self._close_unit_context_menu()
                 return
 
@@ -532,19 +526,12 @@ class PygameMainMenuView:
                 return
 
             if self._planned_supply_route_source_id is None:
-                if clicked_object.object_id in self._game_view.supply_route_source_candidates():
-                    self._planned_supply_route_source_id = clicked_object.object_id
+                self._choose_supply_route_source(clicked_object.object_id)
                 return
 
-            if clicked_object.object_id in self._game_view.supply_route_destination_candidates(
-                source_object_id=self._planned_supply_route_source_id,
-            ):
-                events.append(
-                    GameSupplyRouteRequested(
-                        source_object_id=self._planned_supply_route_source_id,
-                        destination_object_id=clicked_object.object_id,
-                    )
-                )
+            requested_route = self._planned_supply_route_request(clicked_object.object_id)
+            if requested_route is not None:
+                events.append(requested_route)
                 self._cancel_supply_route_planning()
                 return
 
@@ -562,33 +549,32 @@ class PygameMainMenuView:
     def _handle_name_modal_event(self, pygame_event: Any, events: list[UIEvent]) -> None:
         pygame = self._pygame
         if pygame_event.type == pygame.MOUSEBUTTONDOWN and pygame_event.button == 1:
-            if self._modal_ok_hitbox and self._modal_ok_hitbox.collidepoint(pygame_event.pos):
+            if should_dismiss_modal_from_click(self._modal_ok_hitbox, position=pygame_event.pos):
                 self._confirm_character_name()
             return
 
         if pygame_event.type != pygame.KEYDOWN:
             return
 
-        if pygame_event.key == pygame.K_ESCAPE:
+        outcome = resolve_name_modal_input(
+            pygame,
+            key=pygame_event.key,
+            typed=pygame_event.unicode,
+            current_value=self._character_name_input,
+        )
+        if outcome.exit_requested:
             events.append(ExitRequested())
             return
-
-        if pygame_event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+        if outcome.confirm:
             self._confirm_character_name()
             return
-
-        if pygame_event.key == pygame.K_BACKSPACE:
-            self._character_name_input = self._character_name_input[:-1]
-            return
-
-        typed = pygame_event.unicode
-        if typed and typed.isprintable():
-            self._character_name_input = (self._character_name_input + typed)[:24]
+        if outcome.next_value is not None:
+            self._character_name_input = outcome.next_value
 
     def _handle_welcome_modal_event(self, pygame_event: Any, events: list[UIEvent]) -> None:
         pygame = self._pygame
         if pygame_event.type == pygame.MOUSEBUTTONDOWN and pygame_event.button == 1:
-            if self._modal_ok_hitbox and self._modal_ok_hitbox.collidepoint(pygame_event.pos):
+            if should_dismiss_modal_from_click(self._modal_ok_hitbox, position=pygame_event.pos):
                 self._enter_game()
             return
 
@@ -605,15 +591,31 @@ class PygameMainMenuView:
     def _handle_game_report_modal_event(self, pygame_event: Any) -> None:
         pygame = self._pygame
         if pygame_event.type == pygame.MOUSEBUTTONDOWN and pygame_event.button == 1:
-            if self._modal_ok_hitbox and self._modal_ok_hitbox.collidepoint(pygame_event.pos):
+            if should_dismiss_modal_from_click(self._modal_ok_hitbox, position=pygame_event.pos):
                 self._dismiss_active_mission_report()
             return
 
         if pygame_event.type != pygame.KEYDOWN:
             return
 
-        if pygame_event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_KP_ENTER):
+        if should_dismiss_report_modal(pygame, key=pygame_event.key):
             self._dismiss_active_mission_report()
+
+    def _choose_supply_route_source(self, object_id: str) -> None:
+        if object_id in self._game_view.supply_route_source_candidates():
+            self._planned_supply_route_source_id = object_id
+
+    def _planned_supply_route_request(self, object_id: str) -> GameSupplyRouteRequested | None:
+        if self._planned_supply_route_source_id is None:
+            return None
+        if object_id not in self._game_view.supply_route_destination_candidates(
+            source_object_id=self._planned_supply_route_source_id,
+        ):
+            return None
+        return GameSupplyRouteRequested(
+            source_object_id=self._planned_supply_route_source_id,
+            destination_object_id=object_id,
+        )
 
     def _confirm_character_name(self) -> None:
         if not self._has_valid_character_name():
