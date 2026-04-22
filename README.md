@@ -2,6 +2,11 @@
 
 Prosty projekt gry w Pythonie z rozdzieleniem warstw:
 - `src/core` - logika biznesowa i symulacja (menu, sesja gry, cele misji, ruch jednostek), bez `pygame`
+- `src/core/combat` - walka, grupy przeciwnikow i resolver przebiegu starc
+- `src/core/mission_progress` - recon, odkrywanie wzmocnien i raporty postepu misji
+- `src/core/navigation` - planowanie ruchu, drogi i przeliczenia predkosci jednostek
+- `src/core/session_bootstrap.py` - parsowanie konfiguracji oddzialow i budowa stanu startowego sesji
+- `src/core/snapshots` - projekcje stanu domenowego do kontraktow dla UI
 - `src/core/model` - modele domenowe sesji gry
   - `src/core/model/units` - oddzialy, dowodcy i szablony wzmocnien
     - `commanders` - dowodcy i poziomy doswiadczenia

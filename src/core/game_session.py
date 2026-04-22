@@ -4,7 +4,6 @@ import math
 import random
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 from typing import Any
 
 from contracts.game_state import (
@@ -12,23 +11,24 @@ from contracts.game_state import (
     CombatNotificationSnapshot,
     CombatSnapshot,
     GameStateSnapshot,
-    LandingPadResourceSnapshot,
     LandingPadSnapshot,
-    MapObjectSnapshot,
-    MissionObjectiveDefinitionSnapshot,
     MissionObjectiveProgressSnapshot,
     MissionReportSnapshot,
     RoadSnapshot,
     SupplyRouteEndpointSnapshot,
     SupplyRouteSnapshot,
     SupplyTransportSnapshot,
-    UnitCommanderSnapshot,
-    UnitSnapshot,
     ZombieGroupSnapshot,
 )
+from core.combat import CombatNotificationState, CombatResolver, CombatState, ZombieGroupState
 from core.mission_objectives import (
     MissionObjectivesEvaluator,
     create_default_mission_objectives_evaluator,
+)
+from core.mission_progress import (
+    MainObjectiveReportRule,
+    MissionProgressService,
+    main_objective_report_rules_from_config,
 )
 from core.model.buildings import (
     SUPPLY_RESOURCE_ORDER,
@@ -45,7 +45,6 @@ from core.model.buildings import (
 )
 from core.model.units import (
     CommanderState,
-    FormationLevel,
     ReinforcementTemplate,
     UnitEquipmentState,
     UnitOrganizationState,
@@ -54,7 +53,27 @@ from core.model.units import (
     VehicleAssignmentState,
     VehicleTypeSpec,
 )
+from core.navigation import NavigationService
 from core.scenario_config import load_default_scenario_config
+from core.session_bootstrap import (
+    SessionBootstrapper,
+)
+from core.session_bootstrap import (
+    commander_state_from_config as _session_commander_state_from_config,
+)
+from core.session_bootstrap import (
+    equipment_state_from_config as _session_equipment_state_from_config,
+)
+from core.session_bootstrap import (
+    organization_state_from_config as _session_organization_state_from_config,
+)
+from core.session_bootstrap import (
+    reinforcement_templates_from_config as _session_reinforcement_templates_from_config,
+)
+from core.session_bootstrap import (
+    vehicle_assignments_from_config as _session_vehicle_assignments_from_config,
+)
+from core.snapshots import GameStateSnapshotBuilder
 from core.supply_route_manager import SupplyRouteEndpoint, SupplyRouteManager
 
 _SIMULATION_SECONDS_PER_TICK = 8.0
@@ -76,42 +95,6 @@ _ZOMBIE_GROUP_MARKER_SIZE_PX = 22
 _ROAD_SAMPLES_PER_SEGMENT = 14
 
 
-@dataclass
-class ZombieGroupState:
-    group_id: str
-    position: tuple[float, float]
-    name: str = ""
-    personnel: int = 0
-
-
-@dataclass
-class CombatState:
-    combat_id: str
-    unit_id: str
-    enemy_group_id: str
-    seconds_remaining: float
-    total_seconds: float
-    seconds_until_next_exchange: float
-
-
-@dataclass
-class CombatNotificationState:
-    notification_id: str
-    unit_name: str
-    enemy_group_name: str
-    phase: str
-    seconds_remaining: float
-
-
-@dataclass(frozen=True)
-class MainObjectiveReportRule:
-    goal_id: str
-    required_objective_ids: tuple[str, ...]
-    report_id: str
-    title_key: str
-    message_key: str
-
-
 _DEFAULT_SCENARIO = load_default_scenario_config()
 _MAP_WIDTH_KM = _DEFAULT_SCENARIO.map_width_km
 _MAP_OBJECT_LAYOUT = _DEFAULT_SCENARIO.map_objects
@@ -122,84 +105,27 @@ _INITIAL_ENEMY_GROUP_LAYOUT = _DEFAULT_SCENARIO.initial_enemy_groups
 
 
 def _commander_state_from_config(config: dict[str, Any]) -> CommanderState:
-    return CommanderState(
-        name=str(config.get("name", "")),
-        rank=str(config.get("rank", "")),
-        experience_level=str(config.get("experience_level", "basic")),
-    )
+    return _session_commander_state_from_config(config)
 
 
 def _equipment_state_from_config(config: dict[str, Any]) -> UnitEquipmentState:
-    return UnitEquipmentState(
-        primary_weapon_key=str(config.get("primary_weapon_key", "")),
-        support_weapon_key=str(config.get("support_weapon_key", "")),
-        vest_key=str(config.get("vest_key", "")),
-    )
+    return _session_equipment_state_from_config(config)
 
 
 def _vehicle_assignments_from_config(value: Any) -> tuple[VehicleAssignmentState, ...]:
-    if not isinstance(value, list):
-        return ()
-    assignments: list[VehicleAssignmentState] = []
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        assignments.append(
-            VehicleAssignmentState(
-                vehicle_type_id=str(item.get("vehicle_type_id", "")),
-                count=int(item.get("count", 0)),
-            )
-        )
-    return tuple(assignments)
+    return _session_vehicle_assignments_from_config(value)
 
 
 def _organization_state_from_config(config: dict[str, Any]) -> UnitOrganizationState:
-    return UnitOrganizationState(
-        formation_level=str(config.get("formation_level", FormationLevel.SQUAD)),
-        parent_unit_id=(
-            str(config["parent_unit_id"])
-            if "parent_unit_id" in config and config.get("parent_unit_id") is not None
-            else None
-        ),
-        subordinate_unit_ids=tuple(str(unit_id) for unit_id in config.get("subordinate_unit_ids", [])),
-        max_subordinate_units=int(config.get("max_subordinate_units", 0)),
-    )
+    return _session_organization_state_from_config(config)
 
 
 def _reinforcement_templates_from_config() -> tuple[ReinforcementTemplate, ...]:
-    return tuple(
-        ReinforcementTemplate(
-            unit_id=str(template.get("unit_id", "")),
-            unit_type_id=str(template.get("unit_type_id", "")),
-            name=str(template.get("name", "")),
-            commander=_commander_state_from_config(dict(template.get("commander", {}))),
-            experience_level=str(template.get("experience_level", "basic")),
-            personnel=int(template.get("personnel", 0)),
-            morale=int(template.get("morale", 0)),
-            ammo=int(template.get("ammo", 0)),
-            rations=int(template.get("rations", 0)),
-            fuel=int(template.get("fuel", 0)),
-            equipment=_equipment_state_from_config(dict(template.get("equipment", {}))),
-            vehicles=_vehicle_assignments_from_config(template.get("vehicles")),
-            organization=_organization_state_from_config(dict(template.get("organization", {}))),
-        )
-        for template in _DEFAULT_SCENARIO.reinforcements
-    )
+    return _session_reinforcement_templates_from_config(_DEFAULT_SCENARIO.reinforcements)
 
 
 def _main_objective_report_rules_from_config() -> tuple[MainObjectiveReportRule, ...]:
-    return tuple(
-        MainObjectiveReportRule(
-            goal_id=str(report.get("goal_id", "")),
-            required_objective_ids=tuple(
-                str(objective_id) for objective_id in report.get("required_objective_ids", [])
-            ),
-            report_id=str(report.get("report_id", "")),
-            title_key=str(report.get("title_key", "")),
-            message_key=str(report.get("message_key", "")),
-        )
-        for report in _DEFAULT_SCENARIO.mission_reports
-    )
+    return main_objective_report_rules_from_config(_DEFAULT_SCENARIO.mission_reports)
 
 
 REINFORCEMENT_TEMPLATES: tuple[ReinforcementTemplate, ...] = _reinforcement_templates_from_config()
@@ -278,6 +204,19 @@ class GameSession:
         }
         self._time_provider = time_provider or time.monotonic
         self._search_roll_provider = search_roll_provider or random.random
+        self._combat_resolver = CombatResolver(
+            min_duration_seconds=_COMBAT_MIN_DURATION_SECONDS,
+            max_duration_seconds=_COMBAT_MAX_DURATION_SECONDS,
+            exchange_interval_seconds=_COMBAT_EXCHANGE_INTERVAL_SECONDS,
+            notification_duration_seconds=_COMBAT_NOTIFICATION_DURATION_SECONDS,
+        )
+        self._navigation_service = NavigationService(
+            simulation_seconds_per_tick=_SIMULATION_SECONDS_PER_TICK,
+            map_width_km=_MAP_WIDTH_KM,
+        )
+        self._mission_progress_service = MissionProgressService()
+        self._session_bootstrapper = SessionBootstrapper()
+        self._snapshot_builder = GameStateSnapshotBuilder()
 
         self._map_size: tuple[int, int] = (0, 0)
         self._map_objects: list[dict[str, Any]] = []
@@ -431,180 +370,65 @@ class GameSession:
         )
 
     def map_objects_snapshot(self) -> list[dict[str, Any]]:
-        return [{"id": obj["id"], "bounds": obj["bounds"]} for obj in self._map_objects]
+        return self._snapshot_builder.map_objects_state(self._map_objects)
 
     def enemy_groups_state_snapshot(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "group_id": enemy_group.group_id,
-                "position": enemy_group.position,
-                "name": enemy_group.name,
-                "personnel": enemy_group.personnel,
-            }
-            for enemy_group in self._enemy_groups
-        ]
+        return self._snapshot_builder.enemy_groups_state(self._enemy_groups)
 
     def roads_snapshot(self) -> tuple[RoadSnapshot, ...]:
-        return tuple(
-            RoadSnapshot(
-                road_id=str(road["id"]),
-                points=tuple(tuple(point) for point in road["points"]),
-            )
-            for road in self._roads
-        )
+        return self._snapshot_builder.roads(self._roads)
 
     def units_snapshot(self) -> list[dict[str, Any]]:  # pragma: no mutate
-        return [
-            {
-                "unit_id": unit.unit_id,
-                "unit_type_id": unit.unit_type_id,
-                "position": unit.position,
-                "target": unit.target,
-                "marker_size_px": UNIT_TYPE_SPECS[unit.unit_type_id].marker_size_px,
-                "name": unit.name,
-                "commander": {
-                    "name": unit.commander.name,
-                    "experience_level": unit.commander.experience_level,
-                },
-                "experience_level": unit.experience_level,
-                "personnel": unit.personnel,
-                "armament_key": self._unit_armament_key(unit),
-                "attack": self._unit_attack(unit),
-                "defense": self._unit_defense(unit),
-                "morale": unit.morale,
-                "ammo": unit.ammo,
-                "rations": unit.rations,
-                "fuel": unit.fuel,
-                "can_transport_supplies": UNIT_TYPE_SPECS[unit.unit_type_id].can_transport_supplies,
-                "supply_capacity": UNIT_TYPE_SPECS[unit.unit_type_id].supply_capacity,
-                "carried_supply_total": unit.carried_supply_total(resource_order=_SUPPLY_RESOURCE_ORDER),
-                "active_supply_route_id": self._supply_route_id_for_unit(unit.unit_id),  # pragma: no mutate
-                "is_in_combat": self._combat_for_unit(unit.unit_id) is not None,
-                "combat_seconds_remaining": self._display_seconds(
-                    self._combat_seconds_remaining_for_unit(unit.unit_id)
-                ),
-            }
-            for unit in self._units
-        ]
+        return self._snapshot_builder.units(
+            self._units,
+            unit_type_specs=UNIT_TYPE_SPECS,
+            unit_armament_key=self._unit_armament_key,
+            unit_attack=self._unit_attack,
+            unit_defense=self._unit_defense,
+            resource_order=_SUPPLY_RESOURCE_ORDER,
+            supply_route_id_for_unit=self._supply_route_id_for_unit,
+            combat_for_unit=self._combat_for_unit,
+            combat_seconds_remaining_for_unit=self._combat_seconds_remaining_for_unit,
+            display_seconds=self._display_seconds,
+        )
 
     def bases_snapshot(self) -> tuple[BaseSnapshot, ...]:
-        snapshots: list[BaseSnapshot] = []
-        for object_id in sorted(self._bases):
-            base = self._bases[object_id]
-            snapshots.append(
-                BaseSnapshot(  # pragma: no mutate
-                    object_id=base.object_id,  # pragma: no mutate
-                    capacity=base.capacity,  # pragma: no mutate
-                    total_stored=base.total_stored(resource_order=_SUPPLY_RESOURCE_ORDER),  # pragma: no mutate
-                    resources=tuple(  # pragma: no mutate
-                        LandingPadResourceSnapshot(
-                            resource_id=resource_id,  # pragma: no mutate
-                            amount=int(base.resources.get(resource_id, 0)),  # pragma: no mutate
-                        )
-                        for resource_id in _SUPPLY_RESOURCE_ORDER
-                    ),
-                )
-            )
-        return tuple(snapshots)
+        return self._snapshot_builder.bases(
+            self._bases,
+            resource_order=_SUPPLY_RESOURCE_ORDER,
+        )
 
     def enemy_groups_snapshot(self) -> tuple[ZombieGroupSnapshot, ...]:
-        return tuple(
-            ZombieGroupSnapshot(
-                group_id=enemy_group.group_id,
-                position=enemy_group.position,
-                marker_size_px=_ZOMBIE_GROUP_MARKER_SIZE_PX,
-                name=enemy_group.name,
-                personnel=enemy_group.personnel,
-                is_in_combat=self._combat_for_enemy_group(enemy_group.group_id) is not None,
-            )
-            for enemy_group in self._enemy_groups
+        return self._snapshot_builder.enemy_groups(
+            self._enemy_groups,
+            marker_size_px=_ZOMBIE_GROUP_MARKER_SIZE_PX,
+            combat_for_enemy_group=self._combat_for_enemy_group,
         )
 
     def combats_snapshot(self) -> tuple[CombatSnapshot, ...]:
-        snapshots: list[CombatSnapshot] = []
-        for combat_id in sorted(self._combats):
-            combat = self._combats[combat_id]
-            unit = self._find_unit_by_id(combat.unit_id)
-            enemy_group = self._find_enemy_group_by_id(combat.enemy_group_id)
-            if unit is None or enemy_group is None:
-                continue
-            snapshots.append(
-                CombatSnapshot(
-                    combat_id=combat.combat_id,
-                    unit_id=unit.unit_id,
-                    unit_name=unit.name or unit.unit_id,
-                    enemy_group_id=enemy_group.group_id,
-                    enemy_group_name=enemy_group.name or enemy_group.group_id,
-                    seconds_remaining=self._display_seconds(combat.seconds_remaining) or 0,
-                )
-            )
-        return tuple(snapshots)
+        return self._snapshot_builder.combats(
+            self._combats,
+            find_unit_by_id=self._find_unit_by_id,
+            find_enemy_group_by_id=self._find_enemy_group_by_id,
+            display_seconds=self._display_seconds,
+        )
 
     def combat_notifications_snapshot(self) -> tuple[CombatNotificationSnapshot, ...]:
-        return tuple(
-            CombatNotificationSnapshot(
-                notification_id=notification.notification_id,
-                unit_name=notification.unit_name,
-                enemy_group_name=notification.enemy_group_name,
-                phase=notification.phase,
-                seconds_remaining=self._display_seconds(notification.seconds_remaining) or 0,
-            )
-            for notification in reversed(self._combat_notifications)
+        return self._snapshot_builder.combat_notifications(
+            self._combat_notifications,
+            display_seconds=self._display_seconds,
         )
 
     def landing_pads_snapshot(self) -> tuple[LandingPadSnapshot, ...]:
-        snapshots: list[LandingPadSnapshot] = []
-        for object_id in sorted(self._landing_pads):
-            landing_pad = self._landing_pads[object_id]
-            active_transport = landing_pad.active_transport
-            snapshots.append(
-                LandingPadSnapshot(  # pragma: no mutate
-                    object_id=landing_pad.object_id,  # pragma: no mutate
-                    pad_size=landing_pad.pad_size,  # pragma: no mutate
-                    is_secured=landing_pad.is_secured(self._objective_status),  # pragma: no mutate
-                    capacity=landing_pad.capacity,  # pragma: no mutate
-                    total_stored=landing_pad.total_stored(resource_order=_SUPPLY_RESOURCE_ORDER),  # pragma: no mutate
-                    next_transport_seconds=self._display_seconds(  # pragma: no mutate
-                        landing_pad.next_transport_eta_seconds
-                    ),
-                    active_transport_type_id=(  # pragma: no mutate
-                        active_transport.transport_type_id if active_transport is not None else None
-                    ),
-                    active_transport_phase=(  # pragma: no mutate
-                        active_transport.phase if active_transport is not None else None
-                    ),
-                    active_transport_seconds_remaining=(  # pragma: no mutate
-                        self._display_seconds(active_transport.seconds_remaining)
-                        if active_transport is not None
-                        else None
-                    ),
-                    resources=tuple(  # pragma: no mutate
-                        LandingPadResourceSnapshot(
-                            resource_id=resource_id,  # pragma: no mutate
-                            amount=int(landing_pad.resources.get(resource_id, 0)),  # pragma: no mutate
-                        )
-                        for resource_id in _SUPPLY_RESOURCE_ORDER
-                    ),
-                )
-            )
-        return tuple(snapshots)
+        return self._snapshot_builder.landing_pads(
+            self._landing_pads,
+            objective_status=self._objective_status,
+            resource_order=_SUPPLY_RESOURCE_ORDER,
+            display_seconds=self._display_seconds,
+        )
 
     def supply_transports_snapshot(self) -> tuple[SupplyTransportSnapshot, ...]:  # pragma: no mutate
-        snapshots: list[SupplyTransportSnapshot] = []
-        for object_id in sorted(self._landing_pads):
-            active_transport = self._landing_pads[object_id].active_transport
-            if active_transport is None:
-                continue
-            snapshots.append(
-                SupplyTransportSnapshot(  # pragma: no mutate
-                    transport_id=active_transport.transport_id,  # pragma: no mutate
-                    transport_type_id=active_transport.transport_type_id,  # pragma: no mutate
-                    phase=active_transport.phase,  # pragma: no mutate
-                    position=active_transport.position,  # pragma: no mutate
-                    target_object_id=active_transport.target_object_id,  # pragma: no mutate
-                )
-            )
-        return tuple(snapshots)
+        return self._snapshot_builder.supply_transports(self._landing_pads)
 
     def supply_routes_snapshot(self) -> tuple[SupplyRouteSnapshot, ...]:
         return self._supply_route_manager.supply_routes_snapshot(
@@ -613,18 +437,8 @@ class GameSession:
         )
 
     def supply_route_endpoints_snapshot(self) -> tuple[SupplyRouteEndpointSnapshot, ...]:
-        return tuple(
-            SupplyRouteEndpointSnapshot(
-                object_id=endpoint.object_id,
-                location_type=endpoint.location_type,
-                can_dispatch_supplies=endpoint.can_dispatch_supplies,
-                can_receive_supplies=endpoint.can_receive_supplies,
-                is_active=endpoint.is_active,
-            )
-            for endpoint in sorted(
-                self._supply_route_endpoints().values(),
-                key=lambda endpoint: endpoint.object_id,
-            )
+        return self._snapshot_builder.supply_route_endpoints(
+            self._supply_route_endpoints(),
         )
 
     def supply_routes_state_snapshot(self) -> list[dict[str, Any]]:
@@ -637,13 +451,7 @@ class GameSession:
         return self._objective_definitions
 
     def objective_progress_snapshot(self) -> tuple[MissionObjectiveProgressSnapshot, ...]:
-        return tuple(
-            MissionObjectiveProgressSnapshot(
-                objective_id=objective_id,
-                completed=completed,
-            )
-            for objective_id, completed in self._objective_status.items()
-        )
+        return self._snapshot_builder.objective_progress(self._objective_status)
 
     def mission_reports_snapshot(self) -> tuple[MissionReportSnapshot, ...]:
         return tuple(self._mission_reports)
@@ -652,57 +460,22 @@ class GameSession:
         return self._selected_unit_id
 
     def snapshot(self) -> GameStateSnapshot:  # pragma: no mutate
-        return GameStateSnapshot(
-            map_objects=tuple(  # pragma: no mutate
-                MapObjectSnapshot(object_id=obj["id"], bounds=obj["bounds"])
-                for obj in self.map_objects_snapshot()
-            ),
-            roads=self.roads_snapshot(),  # pragma: no mutate
-            units=tuple(  # pragma: no mutate
-                UnitSnapshot(
-                    unit_id=unit["unit_id"],  # pragma: no mutate
-                    unit_type_id=unit["unit_type_id"],  # pragma: no mutate
-                    position=unit["position"],  # pragma: no mutate
-                    target=unit["target"],  # pragma: no mutate
-                    marker_size_px=unit["marker_size_px"],  # pragma: no mutate
-                    name=unit["name"],  # pragma: no mutate
-                    commander=UnitCommanderSnapshot(**unit["commander"]),  # pragma: no mutate
-                    experience_level=unit["experience_level"],  # pragma: no mutate
-                    personnel=unit["personnel"],  # pragma: no mutate
-                    armament_key=unit["armament_key"],  # pragma: no mutate
-                    attack=unit["attack"],  # pragma: no mutate
-                    defense=unit["defense"],  # pragma: no mutate
-                    morale=unit["morale"],  # pragma: no mutate
-                    ammo=unit["ammo"],  # pragma: no mutate
-                    rations=unit["rations"],  # pragma: no mutate
-                    fuel=unit["fuel"],  # pragma: no mutate
-                    can_transport_supplies=unit["can_transport_supplies"],  # pragma: no mutate
-                    supply_capacity=unit["supply_capacity"],  # pragma: no mutate
-                    carried_supply_total=unit["carried_supply_total"],  # pragma: no mutate
-                    active_supply_route_id=unit["active_supply_route_id"],  # pragma: no mutate
-                    is_in_combat=unit["is_in_combat"],  # pragma: no mutate
-                    combat_seconds_remaining=unit["combat_seconds_remaining"],  # pragma: no mutate
-                )
-                for unit in self.units_snapshot()
-            ),
-            enemy_groups=self.enemy_groups_snapshot(),  # pragma: no mutate
-            selected_unit_id=self.selected_unit_id(),  # pragma: no mutate
-            objective_definitions=tuple(  # pragma: no mutate
-                MissionObjectiveDefinitionSnapshot(
-                    objective_id=definition["objective_id"],  # pragma: no mutate
-                    description_key=definition["description_key"],  # pragma: no mutate
-                )
-                for definition in self.objective_definitions_snapshot()
-            ),
-            objective_progress=self.objective_progress_snapshot(),  # pragma: no mutate
-            mission_reports=self.mission_reports_snapshot(),  # pragma: no mutate
-            landing_pads=self.landing_pads_snapshot(),  # pragma: no mutate
-            bases=self.bases_snapshot(),  # pragma: no mutate
-            supply_route_endpoints=self.supply_route_endpoints_snapshot(),  # pragma: no mutate
-            supply_transports=self.supply_transports_snapshot(),  # pragma: no mutate
-            supply_routes=self.supply_routes_snapshot(),  # pragma: no mutate
-            combats=self.combats_snapshot(),  # pragma: no mutate
-            combat_notifications=self.combat_notifications_snapshot(),  # pragma: no mutate
+        return self._snapshot_builder.game_state(
+            map_objects=self.map_objects_snapshot(),
+            roads=self.roads_snapshot(),
+            units=self.units_snapshot(),
+            enemy_groups=self.enemy_groups_snapshot(),
+            selected_unit_id=self.selected_unit_id(),
+            objective_definitions=self.objective_definitions_snapshot(),
+            objective_progress=self.objective_progress_snapshot(),
+            mission_reports=self.mission_reports_snapshot(),
+            landing_pads=self.landing_pads_snapshot(),
+            bases=self.bases_snapshot(),
+            supply_route_endpoints=self.supply_route_endpoints_snapshot(),
+            supply_transports=self.supply_transports_snapshot(),
+            supply_routes=self.supply_routes_snapshot(),
+            combats=self.combats_snapshot(),
+            combat_notifications=self.combat_notifications_snapshot(),
         )
 
     def _build_map_objects(self, width: int, height: int) -> list[dict[str, Any]]:
@@ -898,69 +671,27 @@ class GameSession:
             self._enemy_groups = []
             return
 
-        self._units = []
-        for unit_layout in _INITIAL_UNIT_LAYOUT:
-            position = self._spawn_position_from_layout(unit_layout)
-            if position is None:
-                continue
-            if bool(unit_layout.get("snap_to_road", False)):
-                position = self._road_anchor_for_point(position)
-            commander_config = unit_layout.get("commander")
-            equipment_config = unit_layout.get("equipment")
-            organization_config = unit_layout.get("organization")
-            self._units.append(
-                UnitState(
-                    unit_id=str(unit_layout.get("unit_id", "")),
-                    unit_type_id=str(unit_layout.get("unit_type_id", "")),
-                    position=position,
-                    name=str(unit_layout.get("name", "")),
-                    commander=_commander_state_from_config(
-                        dict(commander_config) if isinstance(commander_config, dict) else {}
-                    ),
-                    experience_level=str(unit_layout.get("experience_level", "basic")),
-                    personnel=int(unit_layout.get("personnel", 0)),
-                    morale=int(unit_layout.get("morale", 0)),
-                    ammo=int(unit_layout.get("ammo", 0)),
-                    rations=int(unit_layout.get("rations", 0)),
-                    fuel=int(unit_layout.get("fuel", 0)),
-                    equipment=_equipment_state_from_config(
-                        dict(equipment_config) if isinstance(equipment_config, dict) else {}
-                    ),
-                    vehicles=_vehicle_assignments_from_config(unit_layout.get("vehicles")),
-                    organization=_organization_state_from_config(
-                        dict(organization_config) if isinstance(organization_config, dict) else {}
-                    ),
-                )
-            )
-
-        self._enemy_groups = []
-        for group_layout in _INITIAL_ENEMY_GROUP_LAYOUT:
-            position = self._spawn_position_from_layout(group_layout)
-            if position is None:
-                continue
-            self._enemy_groups.append(
-                ZombieGroupState(
-                    group_id=str(group_layout.get("group_id", "")),
-                    position=position,
-                    name=str(group_layout.get("name", "")),
-                    personnel=int(group_layout.get("personnel", 0)),
-                )
-            )
-        for unit in self._units:
-            unit.position = self._clamp_point_to_map(unit.position, unit_type_id=unit.unit_type_id)
-        self._clamp_enemy_groups_to_map()
+        bootstrap_state = self._session_bootstrapper.initialize_runtime_state(
+            initial_unit_layout=_INITIAL_UNIT_LAYOUT,
+            initial_enemy_group_layout=_INITIAL_ENEMY_GROUP_LAYOUT,
+            map_object_bounds=self._map_object_bounds,
+            map_object_center=self._map_object_center,
+            road_anchor_for_point=self._road_anchor_for_point,
+            clamp_unit_point=lambda position, unit_type_id: self._clamp_point_to_map(
+                position,
+                unit_type_id=unit_type_id,
+            ),
+            clamp_enemy_point=self._clamp_enemy_point_to_map,
+        )
+        self._units = bootstrap_state.units
+        self._enemy_groups = bootstrap_state.enemy_groups
         self._units_initialized = True
 
     def _spawn_position_from_layout(self, layout: dict[str, Any]) -> tuple[float, float] | None:
-        anchor_object_id = str(layout.get("anchor_object_id", ""))
-        if not anchor_object_id:
-            return None
-        if self._map_object_bounds(anchor_object_id) is None:
-            return None
-        anchor_x, anchor_y = self._map_object_center(anchor_object_id)
-        return (
-            anchor_x + float(layout.get("offset_x", 0.0)),
-            anchor_y + float(layout.get("offset_y", 0.0)),
+        return self._session_bootstrapper.spawn_position_from_layout(
+            layout,
+            map_object_bounds=self._map_object_bounds,
+            map_object_center=self._map_object_center,
         )
 
     def _clamp_enemy_groups_to_map(self) -> None:
@@ -968,36 +699,25 @@ class GameSession:
             enemy_group.position = self._clamp_enemy_point_to_map(enemy_group.position)
 
     def _investigate_recon_sites(self) -> None:
-        newly_investigated = False
-        for layout in _RECON_SITE_LAYOUT:
-            site_id = str(layout["id"])
-            if site_id in self._investigated_recon_site_ids:
-                continue
-
-            site_bounds = self._map_object_bounds(site_id)
-            if site_bounds is None:
-                continue
-
-            if not any(self._point_in_bounds(unit.position, site_bounds) for unit in self._units):
-                continue
-
-            self._investigated_recon_site_ids.add(site_id)
-            newly_investigated = True
-            if self._should_reveal_reinforcement():
-                self._spawn_next_reinforcement(site_id)
-
-        if newly_investigated:
-            self._refresh_dynamic_map_objects()
+        self._mission_progress_service.investigate_recon_sites(
+            recon_site_layout=_RECON_SITE_LAYOUT,
+            investigated_recon_site_ids=self._investigated_recon_site_ids,
+            units=self._units,
+            map_object_bounds=self._map_object_bounds,
+            point_in_bounds=self._point_in_bounds,
+            should_reveal_reinforcement=self._should_reveal_reinforcement,
+            spawn_next_reinforcement=self._spawn_next_reinforcement,
+            refresh_dynamic_map_objects=self._refresh_dynamic_map_objects,
+        )
 
     def _should_reveal_reinforcement(self) -> bool:
-        remaining_reinforcements = len(REINFORCEMENT_TEMPLATES) - self._discovered_reinforcements_count()
-        remaining_sites = len(_RECON_SITE_LAYOUT) - len(self._investigated_recon_site_ids) + 1
-        if remaining_reinforcements <= 0 or remaining_sites <= 0:
-            return False
-        if remaining_reinforcements >= remaining_sites:
-            return True
-        reveal_probability = remaining_reinforcements / float(remaining_sites)
-        return float(self._search_roll_provider()) <= reveal_probability
+        return self._mission_progress_service.should_reveal_reinforcement(
+            reinforcement_templates=REINFORCEMENT_TEMPLATES,
+            found_reinforcement_unit_ids=self._found_reinforcement_unit_ids,
+            investigated_recon_site_ids=self._investigated_recon_site_ids,
+            recon_site_count=len(_RECON_SITE_LAYOUT),
+            search_roll_provider=self._search_roll_provider,
+        )
 
     def _spawn_next_reinforcement(self, site_id: str) -> None:
         next_template = next(
@@ -1011,26 +731,15 @@ class GameSession:
         if next_template is None:
             return
 
-        spawn_position = self._clamp_point_to_map(
-            self._map_object_center(site_id),
-            unit_type_id=next_template.unit_type_id,
-        )
         self._units.append(
-            UnitState(
-                unit_id=next_template.unit_id,
-                unit_type_id=next_template.unit_type_id,
-                position=spawn_position,
-                name=next_template.name,
-                commander=next_template.commander,
-                experience_level=next_template.experience_level,
-                personnel=next_template.personnel,
-                morale=next_template.morale,
-                ammo=next_template.ammo,
-                rations=next_template.rations,
-                fuel=next_template.fuel,
-                equipment=next_template.equipment,
-                vehicles=next_template.vehicles,
-                organization=next_template.organization,
+            self._session_bootstrapper.spawn_reinforcement(
+                next_template,
+                site_id=site_id,
+                map_object_center=self._map_object_center,
+                clamp_unit_point=lambda position, unit_type_id: self._clamp_point_to_map(
+                    position,
+                    unit_type_id=unit_type_id,
+                ),
             )
         )
         self._found_reinforcement_unit_ids.add(next_template.unit_id)
@@ -1065,86 +774,48 @@ class GameSession:
         return len(self._found_reinforcement_unit_ids)
 
     def _update_main_objective_reports(self) -> None:
-        for report_rule in MAIN_OBJECTIVE_REPORT_RULES:
-            if report_rule.goal_id in self._completed_main_objective_ids:
-                continue
-            if not all(
-                self._objective_status.get(objective_id, False)
-                for objective_id in report_rule.required_objective_ids
-            ):
-                continue
-            self._completed_main_objective_ids.add(report_rule.goal_id)
-            self._mission_reports.append(
-                MissionReportSnapshot(
-                    report_id=report_rule.report_id,
-                    title_key=report_rule.title_key,
-                    message_key=report_rule.message_key,
-                )
-            )
+        self._mission_progress_service.update_main_objective_reports(
+            rules=MAIN_OBJECTIVE_REPORT_RULES,
+            completed_main_objective_ids=self._completed_main_objective_ids,
+            objective_status=self._objective_status,
+            mission_reports=self._mission_reports,
+        )
 
     def _update_combats(self, *, elapsed_seconds: float) -> None:
-        for combat_id in list(sorted(self._combats)):
-            combat = self._combats.get(combat_id)
-            if combat is None:
-                continue
-
-            unit = self._find_unit_by_id(combat.unit_id)
-            enemy_group = self._find_enemy_group_by_id(combat.enemy_group_id)
-            if unit is None or enemy_group is None:
-                self._combats.pop(combat_id, None)
-                continue
-
-            remaining_elapsed = max(0.0, elapsed_seconds)
-            while remaining_elapsed > 0.0:
-                step_seconds = min(
-                    remaining_elapsed,
-                    combat.seconds_remaining,
-                    combat.seconds_until_next_exchange,
-                )
-                combat.seconds_remaining = max(0.0, combat.seconds_remaining - step_seconds)
-                combat.seconds_until_next_exchange = max(0.0, combat.seconds_until_next_exchange - step_seconds)
-                remaining_elapsed -= step_seconds
-
-                if combat.seconds_until_next_exchange <= 0.0:
-                    self._apply_combat_attrition(unit, enemy_group)
-                    if enemy_group.personnel <= 0:
-                        self._resolve_combat(combat)
-                        break
-                    if combat.seconds_remaining > 0.0:
-                        combat.seconds_until_next_exchange = min(
-                            _COMBAT_EXCHANGE_INTERVAL_SECONDS,
-                            combat.seconds_remaining,
-                        )
-
-                if combat.seconds_remaining <= 0.0:
-                    self._resolve_combat(combat)
-                    break
-
-                if step_seconds <= 0.0:
-                    break
+        self._combat_resolver.update_combats(
+            self._combats,
+            self._combat_notifications,
+            elapsed_seconds=elapsed_seconds,
+            find_unit_by_id=self._find_unit_by_id,
+            find_enemy_group_by_id=self._find_enemy_group_by_id,
+            remove_enemy_group_by_id=self._remove_enemy_group_by_id,
+            unit_attack=self._unit_attack,
+            unit_defense=self._unit_defense,
+        )
 
     def _update_combat_notifications(self, *, elapsed_seconds: float) -> None:
-        if elapsed_seconds <= 0.0:
-            return
-        updated_notifications: list[CombatNotificationState] = []
-        for notification in self._combat_notifications:
-            notification.seconds_remaining = max(0.0, notification.seconds_remaining - elapsed_seconds)
-            if notification.seconds_remaining > 0.0:
-                updated_notifications.append(notification)
-        self._combat_notifications = updated_notifications
+        self._combat_notifications = self._combat_resolver.update_notifications(
+            self._combat_notifications,
+            elapsed_seconds=elapsed_seconds,
+        )
 
     def _start_combats_for_colliding_units(self) -> None:
-        for enemy_group in self._enemy_groups:
-            if self._combat_for_enemy_group(enemy_group.group_id) is not None:
-                continue
-
-            for unit in self._units:
-                if self._combat_for_unit(unit.unit_id) is not None:
-                    continue
-                if not self._bounds_overlap(self._unit_bounds(unit), self._enemy_group_bounds(enemy_group)):
-                    continue
-                self._start_combat(unit, enemy_group)
-                break
+        self._combat_resolver.start_combats_for_colliding_units(
+            self._combats,
+            self._combat_notifications,
+            units=self._units,
+            enemy_groups=self._enemy_groups,
+            combat_for_unit=self._combat_for_unit,
+            combat_for_enemy_group=self._combat_for_enemy_group,
+            unit_bounds=self._unit_bounds,
+            enemy_group_bounds=self._enemy_group_bounds,
+            bounds_overlap=self._bounds_overlap,
+            unit_attack=self._unit_attack,
+            clamp_unit_position=lambda position, unit_type_id: self._clamp_point_to_map(
+                position,
+                unit_type_id=unit_type_id,
+            ),
+        )
 
     def _update_units_position(self) -> None:
         for unit in self._units:
@@ -1165,60 +836,42 @@ class GameSession:
             )
 
     def _start_combat(self, unit: UnitState, enemy_group: ZombieGroupState) -> None:
-        duration_seconds = self._combat_duration_seconds(unit, enemy_group)
-        combat = CombatState(
-            combat_id=f"{unit.unit_id}:{enemy_group.group_id}",
-            unit_id=unit.unit_id,
-            enemy_group_id=enemy_group.group_id,
-            seconds_remaining=duration_seconds,
-            total_seconds=duration_seconds,
-            seconds_until_next_exchange=min(_COMBAT_EXCHANGE_INTERVAL_SECONDS, duration_seconds),
+        self._combat_resolver.start_combat(
+            self._combats,
+            self._combat_notifications,
+            unit=unit,
+            enemy_group=enemy_group,
+            unit_attack=self._unit_attack,
+            clamp_unit_position=lambda position, unit_type_id: self._clamp_point_to_map(
+                position,
+                unit_type_id=unit_type_id,
+            ),
         )
-        self._combats[combat.combat_id] = combat
-        self._push_combat_notification(
-            notification_id=f"{combat.combat_id}:started",
-            unit_name=unit.name or unit.unit_id,
-            enemy_group_name=enemy_group.name or enemy_group.group_id,
-            phase="started",
-        )
-        unit.position = self._clamp_point_to_map(unit.position, unit_type_id=unit.unit_type_id)
 
     def _combat_duration_seconds(self, unit: UnitState, enemy_group: ZombieGroupState) -> float:
-        enemy_strength = max(1, int(enemy_group.personnel))
-        suppression = max(1, int(self._unit_attack(unit)) // 3)
-        expected_exchanges = math.ceil(enemy_strength / suppression)
-        return min(
-            _COMBAT_MAX_DURATION_SECONDS,
-            max(_COMBAT_MIN_DURATION_SECONDS, float(expected_exchanges * _COMBAT_EXCHANGE_INTERVAL_SECONDS)),
+        return self._combat_resolver.combat_duration_seconds(
+            unit,
+            enemy_group,
+            unit_attack=self._unit_attack,
         )
 
     def _apply_combat_attrition(self, unit: UnitState, enemy_group: ZombieGroupState) -> None:
-        attack_strength = self._unit_attack(unit)
-        suppression = max(1, int(attack_strength) // 3)
-        enemy_group.personnel = max(0, enemy_group.personnel - suppression)
-        unit.ammo = max(0, unit.ammo - max(4, attack_strength * 2))
-        incoming_pressure = math.ceil(enemy_group.personnel / 5)
-        defense_offset = max(0, self._unit_defense(unit) // 8)
-        unit.morale = max(0, unit.morale - max(1, incoming_pressure - defense_offset))
+        self._combat_resolver.apply_combat_attrition(
+            unit,
+            enemy_group,
+            unit_attack=self._unit_attack,
+            unit_defense=self._unit_defense,
+        )
 
     def _resolve_combat(self, combat: CombatState) -> None:
-        self._combats.pop(combat.combat_id, None)
-        unit = self._find_unit_by_id(combat.unit_id)
-        enemy_group = self._find_enemy_group_by_id(combat.enemy_group_id)
-        if unit is not None and enemy_group is not None:
-            self._push_combat_notification(
-                notification_id=f"{combat.combat_id}:ended",
-                unit_name=unit.name or unit.unit_id,
-                enemy_group_name=enemy_group.name or enemy_group.group_id,
-                phase="ended",
-            )
-        if enemy_group is None:
-            return
-        self._enemy_groups = [
-            active_enemy_group
-            for active_enemy_group in self._enemy_groups
-            if active_enemy_group.group_id != enemy_group.group_id
-        ]
+        self._combat_resolver.resolve_combat(
+            self._combats,
+            self._combat_notifications,
+            combat=combat,
+            find_unit_by_id=self._find_unit_by_id,
+            find_enemy_group_by_id=self._find_enemy_group_by_id,
+            remove_enemy_group_by_id=self._remove_enemy_group_by_id,
+        )
 
     def _push_combat_notification(
         self,
@@ -1228,16 +881,13 @@ class GameSession:
         enemy_group_name: str,
         phase: str,
     ) -> None:
-        self._combat_notifications.append(
-            CombatNotificationState(
-                notification_id=notification_id,
-                unit_name=unit_name,
-                enemy_group_name=enemy_group_name,
-                phase=phase,
-                seconds_remaining=_COMBAT_NOTIFICATION_DURATION_SECONDS,
-            )
+        self._combat_resolver.append_notification(
+            self._combat_notifications,
+            notification_id=notification_id,
+            unit_name=unit_name,
+            enemy_group_name=enemy_group_name,
+            phase=phase,
         )
-        self._combat_notifications = self._combat_notifications[-6:]
 
     def _set_unit_target(
         self,
@@ -1246,16 +896,17 @@ class GameSession:
         *,
         road_mode: str,
     ) -> None:
-        final_target = self._clamp_point_to_map(destination, unit_type_id=unit.unit_type_id)
-        path = self._plan_unit_path(
-            unit.position,
-            final_target,
+        self._navigation_service.set_unit_target(
+            unit,
+            destination,
             road_mode=road_mode,
-        )
-        unit.set_movement_target(
-            final_target,
-            path=path,
+            roads=self._roads,
+            clamp_point_to_map=lambda position, unit_type_id: self._clamp_point_to_map(
+                position,
+                unit_type_id=unit_type_id,
+            ),
             positions_match=self._positions_match,
+            deduplicate_points=lambda points: self._deduplicate_points(list(points)),
         )
 
     def _plan_unit_path(
@@ -1265,47 +916,28 @@ class GameSession:
         *,
         road_mode: str,
     ) -> list[tuple[float, float]]:
-        if road_mode == "off" or not self._roads:  # pragma: no mutate
-            return [destination]  # pragma: no mutate
-
-        road_points = self._primary_road_points()  # pragma: no mutate
-        if not road_points:  # pragma: no mutate
-            return [destination]  # pragma: no mutate
-
-        start_anchor = self._road_anchor_for_point(start)  # pragma: no mutate
-        destination_anchor = self._road_anchor_for_point(destination)  # pragma: no mutate
-        path: list[tuple[float, float]] = []  # pragma: no mutate
-
-        if road_mode == "prefer" and not self._positions_match(start, start_anchor, tolerance=2.0):  # pragma: no mutate
-            path.append(start_anchor)  # pragma: no mutate
-
-        path.extend(self._road_points_between(start_anchor, destination_anchor))  # pragma: no mutate
-
-        if not path or not self._positions_match(path[-1], destination_anchor, tolerance=2.0):  # pragma: no mutate
-            path.append(destination_anchor)  # pragma: no mutate
-
-        if not self._positions_match(path[-1], destination, tolerance=2.0):  # pragma: no mutate
-            path.append(destination)  # pragma: no mutate
-
-        return self._deduplicate_points(path)  # pragma: no mutate
+        return self._navigation_service.plan_unit_path(
+            start,
+            destination,
+            road_mode=road_mode,
+            roads=self._roads,
+            positions_match=self._positions_match,
+            deduplicate_points=lambda points: self._deduplicate_points(list(points)),
+        )
 
     def _road_mode_for_unit(self, unit_type_id: str) -> str:
-        if self._supply_route_manager.can_unit_type_create_convoy(unit_type_id):  # pragma: no mutate
-            return "prefer"  # pragma: no mutate
-        return "off"  # pragma: no mutate
+        return self._navigation_service.road_mode_for_unit(
+            unit_type_id,
+            can_unit_type_create_convoy=self._supply_route_manager.can_unit_type_create_convoy,
+        )
 
     def _primary_road_points(self) -> tuple[tuple[float, float], ...]:
-        if not self._roads:  # pragma: no mutate
-            return ()  # pragma: no mutate
-        return tuple(self._roads[0].get("points", ()))  # pragma: no mutate
+        return self._navigation_service.primary_road_points(self._roads)
 
     def _road_anchor_for_point(self, point: tuple[float, float]) -> tuple[float, float]:
-        road_points = self._primary_road_points()  # pragma: no mutate
-        if not road_points:  # pragma: no mutate
-            return point  # pragma: no mutate
-        return min(  # pragma: no mutate
-            road_points,  # pragma: no mutate
-            key=lambda road_point: math.hypot(road_point[0] - point[0], road_point[1] - point[1]),  # pragma: no mutate
+        return self._navigation_service.road_anchor_for_point(
+            point,
+            roads=self._roads,
         )
 
     def _road_points_between(
@@ -1313,15 +945,11 @@ class GameSession:
         start_anchor: tuple[float, float],
         destination_anchor: tuple[float, float],
     ) -> list[tuple[float, float]]:
-        road_points = self._primary_road_points()  # pragma: no mutate
-        if not road_points:  # pragma: no mutate
-            return []  # pragma: no mutate
-
-        start_index = road_points.index(start_anchor)  # pragma: no mutate
-        destination_index = road_points.index(destination_anchor)  # pragma: no mutate
-        if start_index <= destination_index:  # pragma: no mutate
-            return list(road_points[start_index : destination_index + 1])  # pragma: no mutate
-        return list(reversed(road_points[destination_index : start_index + 1]))  # pragma: no mutate
+        return self._navigation_service.road_points_between(
+            start_anchor,
+            destination_anchor,
+            roads=self._roads,
+        )
 
     def _consume_supply_elapsed_seconds(self) -> float:
         now = float(self._time_provider())
@@ -1455,23 +1083,26 @@ class GameSession:
 
     def _movement_pixels_per_tick(self, unit_type_id: str) -> float:  # pragma: no mutate
         width, _height = self._map_size
-        if width <= 0:
-            return 0.0
-        speed_kmph = UNIT_TYPE_SPECS[unit_type_id].speed_kmph
-        return self._pixels_per_tick_from_speed_kmph(speed_kmph)
+        return self._navigation_service.movement_pixels_per_tick(
+            unit_type_id,
+            map_width_px=width,
+            base_speed_kmph=lambda active_unit_type_id: UNIT_TYPE_SPECS[active_unit_type_id].speed_kmph,
+        )
 
     def _unit_movement_pixels_per_tick(self, unit: UnitState) -> float:
-        return self._pixels_per_tick_from_speed_kmph(self._unit_speed_kmph(unit))
+        width, _height = self._map_size
+        return self._navigation_service.unit_movement_pixels_per_tick(
+            unit,
+            map_width_px=width,
+            unit_speed_kmph=self._unit_speed_kmph,
+        )
 
     def _pixels_per_tick_from_speed_kmph(self, speed_kmph: float) -> float:
         width, _height = self._map_size
-        if width <= 0:
-            return 0.0
-        km_per_tick = (speed_kmph / 3600.0) * _SIMULATION_SECONDS_PER_TICK
-        km_per_pixel = _MAP_WIDTH_KM / float(width)
-        if km_per_pixel <= 0:
-            return 0.0
-        return km_per_tick / km_per_pixel
+        return self._navigation_service.pixels_per_tick_from_speed_kmph(
+            speed_kmph,
+            map_width_px=width,
+        )
 
     def _unit_armament_key(self, unit: UnitState) -> str:
         if unit.equipment.primary_weapon_key:
@@ -1532,6 +1163,11 @@ class GameSession:
             if enemy_group.group_id == group_id:
                 return enemy_group
         return None
+
+    def _remove_enemy_group_by_id(self, group_id: str) -> None:
+        self._enemy_groups = [
+            enemy_group for enemy_group in self._enemy_groups if enemy_group.group_id != group_id
+        ]
 
     def _combat_for_unit(self, unit_id: str) -> CombatState | None:
         for combat in self._combats.values():
