@@ -26,7 +26,7 @@ from contracts.game_state import (
 from core.combat import CombatNotificationState, CombatState, ZombieGroupState
 from core.model.buildings import BaseState, LandingPadState
 from core.model.units import UnitState, UnitTypeSpec
-from core.supply_route_manager import SupplyRouteEndpoint
+from core.logistics.routes import SupplyRouteEndpoint
 
 DisplaySeconds = Callable[[float | None], int | None]
 UnitCombatLookup = Callable[[str], CombatState | None]

@@ -4,7 +4,7 @@ import math
 
 from core.model.buildings import BaseState, LandingPadState, SupplyRouteState
 from core.model.units import UnitState
-from core.supply_route_manager import (
+from core.logistics.routes import (
     SupplyRouteEndpoint,
     SupplyRouteManager,
     SupplyRoutePairDirection,

@@ -74,7 +74,7 @@ from core.session_bootstrap import (
     vehicle_assignments_from_config as _session_vehicle_assignments_from_config,
 )
 from core.snapshots import GameStateSnapshotBuilder
-from core.supply_route_manager import SupplyRouteEndpoint, SupplyRouteManager
+from core.logistics import LogisticsPort, SupplyNetworkService, SupplyRouteEndpoint, SupplyRouteManager
 
 _SIMULATION_SECONDS_PER_TICK = 8.0
 _SUPPLY_INTERVAL_SECONDS = 45.0
@@ -189,7 +189,7 @@ SUPPLY_TRANSPORT_TYPE_SPECS: dict[str, SupplyTransportTypeSpec] = {
 }
 
 
-class GameSession:
+class GameSession(LogisticsPort):
     def __init__(
         self,
         *,
@@ -226,6 +226,12 @@ class GameSession:
         self._supply_route_manager = SupplyRouteManager(
             resource_order=_SUPPLY_RESOURCE_ORDER,
             can_unit_type_transport_supplies=self._unit_can_transport_supplies,
+        )
+        self._supply_network_service = SupplyNetworkService(
+            supply_interval_seconds=_SUPPLY_INTERVAL_SECONDS,
+            supply_unload_seconds=_SUPPLY_UNLOAD_SECONDS,
+            supply_departure_seconds=_SUPPLY_DEPARTURE_SECONDS,
+            resource_order=_SUPPLY_RESOURCE_ORDER,
         )
         self._supply_routes = {}
         self._units: list[UnitState] = []
@@ -299,7 +305,7 @@ class GameSession:
                     )
                     self._set_unit_target(unit, unit.target, road_mode=road_mode)
             self._clamp_enemy_groups_to_map()
-            self._refresh_supply_route_targets()
+            self._supply_network_service.refresh_route_targets(self)
 
     def tick(self) -> None:
         elapsed_supply_seconds = self._consume_supply_elapsed_seconds()
@@ -318,8 +324,8 @@ class GameSession:
             discovered_reinforcements_count=self._discovered_reinforcements_count(),
         )
         self._update_main_objective_reports()
-        self._update_supply_network(elapsed_seconds=elapsed_supply_seconds)
-        self._update_supply_routes(elapsed_seconds=elapsed_supply_seconds)
+        self._supply_network_service.update_network(self, elapsed_seconds=elapsed_supply_seconds)
+        self._supply_network_service.update_routes(self, elapsed_seconds=elapsed_supply_seconds)
 
     def sync_state(self, *, width: int, height: int) -> GameStateSnapshot:
         self.update_map_dimensions(width=width, height=height)
@@ -969,36 +975,14 @@ class GameSession:
         self._last_combat_update_at = now
         return elapsed_seconds
 
-    def _update_supply_network(self, *, elapsed_seconds: float) -> None:
-        for landing_pad in self._landing_pads.values():
-            self._update_landing_pad_supply(landing_pad, elapsed_seconds=max(0.0, elapsed_seconds))
-
-    def _update_landing_pad_supply(
-        self,
-        landing_pad: LandingPadState,
-        elapsed_seconds: float,
-    ) -> None:
-        landing_pad.update_supply(
-            elapsed_seconds,
-            is_secured=landing_pad.is_secured(self._objective_status),
-            supply_interval_seconds=_SUPPLY_INTERVAL_SECONDS,
-            refresh_transport_geometry=lambda: self._refresh_transport_geometry(landing_pad),
-            start_transport=lambda: self._start_transport_for_landing_pad(landing_pad),
-            advance_transport=lambda spent_seconds: self._advance_transport(landing_pad, spent_seconds),
-            resource_order=_SUPPLY_RESOURCE_ORDER,
-        )
-
     def _advance_transport(self, landing_pad: LandingPadState, elapsed_seconds: float) -> None:
         active_transport = landing_pad.active_transport
         if active_transport is None:
             return
-        landing_pad.advance_transport(
+        self._supply_network_service.advance_transport(
+            landing_pad,
             elapsed_seconds=elapsed_seconds,
-            unload_seconds=_SUPPLY_UNLOAD_SECONDS,
-            departure_seconds=_SUPPLY_DEPARTURE_SECONDS,
             delivery_cargo=SUPPLY_TRANSPORT_TYPE_SPECS[active_transport.transport_type_id].cargo,
-            supply_interval_seconds=_SUPPLY_INTERVAL_SECONDS,
-            resource_order=_SUPPLY_RESOURCE_ORDER,
         )
 
     def _start_transport_for_landing_pad(self, landing_pad: LandingPadState) -> None:
@@ -1018,23 +1002,6 @@ class GameSession:
             resource_order=_SUPPLY_RESOURCE_ORDER,
         )
 
-    def _update_supply_routes(self, *, elapsed_seconds: float) -> None:
-        for route_id in list(sorted(self._supply_routes)):
-            route = self._supply_routes.get(route_id)
-            if route is None:
-                continue
-
-            unit = self._find_unit_by_id(route.unit_id)
-            if unit is None:
-                self._supply_routes.pop(route_id, None)
-                continue
-
-            self._refresh_supply_route(route, elapsed_seconds=elapsed_seconds)
-
-    def _refresh_supply_route_targets(self) -> None:
-        for route in self._supply_routes.values():
-            self._refresh_supply_route(route)
-
     def _refresh_supply_route(self, route: SupplyRouteState, *, elapsed_seconds: float = 0.0) -> None:
         self._supply_route_manager.refresh_route(
             route,
@@ -1049,6 +1016,36 @@ class GameSession:
             unit_load_seconds=self._unit_supply_load_seconds,
             unit_unload_seconds=self._unit_supply_unload_seconds,
         )
+
+    def landing_pads(self) -> Mapping[str, LandingPadState]:
+        return self._landing_pads
+
+    def objective_status(self) -> Mapping[str, bool]:
+        return self._objective_status
+
+    def refresh_transport_geometry(self, landing_pad: LandingPadState) -> None:
+        self._refresh_transport_geometry(landing_pad)
+
+    def start_transport_for_landing_pad(self, landing_pad: LandingPadState) -> None:
+        self._start_transport_for_landing_pad(landing_pad)
+
+    def advance_transport(self, landing_pad: LandingPadState, elapsed_seconds: float) -> None:
+        self._advance_transport(landing_pad, elapsed_seconds)
+
+    def supply_route_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._supply_routes))
+
+    def supply_route_by_id(self, route_id: str) -> SupplyRouteState | None:
+        return self._supply_routes.get(route_id)
+
+    def find_unit_by_id(self, unit_id: str) -> UnitState | None:
+        return self._find_unit_by_id(unit_id)
+
+    def remove_supply_route(self, route_id: str) -> None:
+        self._supply_routes.pop(route_id, None)
+
+    def refresh_supply_route(self, route: SupplyRouteState, *, elapsed_seconds: float = 0.0) -> None:
+        self._refresh_supply_route(route, elapsed_seconds=elapsed_seconds)
 
     def _refresh_route_pickup(self, route: SupplyRouteState, unit: UnitState) -> None:
         self._supply_route_manager.refresh_route_pickup(
