@@ -13,5 +13,8 @@ if str(SRC_DIR) not in sys.path:
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    if config.option.basetemp is not None:
+        return
+
     configured_tmp_root = os.environ.get("ZOMBIEGAME_TEST_TMP_ROOT")
     config.option.basetemp = Path(configured_tmp_root) if configured_tmp_root else config.rootpath / ".test-tmp"

@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 
 def find_script_path() -> Path:
     for parent in Path(__file__).resolve().parents:
@@ -35,8 +37,10 @@ def _test_tmp_root() -> Path:
     return Path(configured_tmp_root) if configured_tmp_root else TEST_ROOT / ".test-tmp"
 
 
-def test_pytest_tmp_path_uses_canonical_directory(tmp_path: Path) -> None:
-    assert tmp_path.is_relative_to(_test_tmp_root())
+def test_pytest_tmp_path_uses_configured_directory(tmp_path: Path, pytestconfig: pytest.Config) -> None:
+    configured_tmp_root = Path(pytestconfig.option.basetemp)
+
+    assert tmp_path.is_relative_to(configured_tmp_root)
 
 
 @contextmanager
