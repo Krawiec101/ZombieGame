@@ -28,11 +28,12 @@ assert SCRIPT_SPEC.loader is not None
 CRAP_GATE = importlib.util.module_from_spec(SCRIPT_SPEC)
 sys.modules[SCRIPT_SPEC.name] = CRAP_GATE
 SCRIPT_SPEC.loader.exec_module(CRAP_GATE)
+TEST_ROOT = Path(__file__).resolve().parents[2]
 
 
 @contextmanager
 def workspace_tmp_dir() -> Path:
-    tmp_root = Path.cwd() / ".test-tmp" / "crap-gate-tests"
+    tmp_root = TEST_ROOT / ".test-tmp" / "crap-gate-tests"
     tmp_root.mkdir(parents=True, exist_ok=True)
     tmp_path = tmp_root / f"crap-gate-{uuid4().hex}"
     tmp_path.mkdir()
