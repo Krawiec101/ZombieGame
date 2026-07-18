@@ -196,13 +196,6 @@ def test_default_evaluator_uses_zero_reinforcement_default_when_argument_is_omit
     assert statuses["find_second_missing_detachment"] is False
 
 
-def test_evaluate_signature_exposes_zero_reinforcement_default() -> None:
-    kwdefaults = MissionObjectivesEvaluator.evaluate.__kwdefaults__
-
-    assert kwdefaults is not None
-    assert kwdefaults["discovered_reinforcements_count"] == 0
-
-
 def test_create_default_mission_objectives_evaluator_uses_default_rules_constant() -> None:
     evaluator = create_default_mission_objectives_evaluator()
 
