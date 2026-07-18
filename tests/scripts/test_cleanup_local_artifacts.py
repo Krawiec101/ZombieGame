@@ -38,9 +38,9 @@ def _test_tmp_root() -> Path:
 
 
 def test_pytest_tmp_path_uses_configured_directory(tmp_path: Path, pytestconfig: pytest.Config) -> None:
-    configured_tmp_root = Path(pytestconfig.option.basetemp)
+    configured_basetemp = Path(pytestconfig.option.basetemp).resolve()
 
-    assert tmp_path.is_relative_to(configured_tmp_root)
+    assert tmp_path.is_relative_to(configured_basetemp)
 
 
 @contextmanager
