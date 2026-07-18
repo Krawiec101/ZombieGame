@@ -29,14 +29,14 @@ REAL_RMTREE = shutil.rmtree
 
 
 def test_pytest_tmp_path_uses_canonical_directory(tmp_path: Path) -> None:
-    canonical_tmp_root = SCRIPT_PATH.parents[1] / ".test-tmp"
+    canonical_tmp_root = Path.cwd() / ".test-tmp"
 
     assert tmp_path.is_relative_to(canonical_tmp_root)
 
 
 @contextmanager
 def workspace_tmp_dir() -> Iterator[Path]:
-    tmp_root = SCRIPT_PATH.parents[1] / ".test-tmp" / "cleanup-script-tests"
+    tmp_root = Path.cwd() / ".test-tmp" / "cleanup-script-tests"
     tmp_root.mkdir(parents=True, exist_ok=True)
     tmp_path = tmp_root / f"cleanup-script-{uuid4().hex}"
     tmp_path.mkdir()
