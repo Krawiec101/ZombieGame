@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import random
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from contracts.game_state import (
@@ -54,7 +54,7 @@ from core.model.units import (
     VehicleAssignmentState,
     VehicleTypeSpec,
 )
-from core.navigation import NavigationService
+from core.navigation import NavigationService, RoadGeometryService
 from core.scenario_config import load_default_scenario_config
 from core.session_bootstrap import (
     SessionBootstrapper,
@@ -214,6 +214,7 @@ class GameSession(LogisticsPort):
             simulation_seconds_per_tick=_SIMULATION_SECONDS_PER_TICK,
             map_width_km=_MAP_WIDTH_KM,
         )
+        self._road_geometry_service = RoadGeometryService(samples_per_segment=_ROAD_SAMPLES_PER_SEGMENT)
         self._mission_progress_service = MissionProgressService()
         self._session_bootstrapper = SessionBootstrapper()
         self._snapshot_builder = GameStateSnapshotBuilder()
@@ -512,106 +513,11 @@ class GameSession(LogisticsPort):
         return map_object
 
     def _build_roads(self) -> list[dict[str, Any]]:
-        roads: list[dict[str, Any]] = []
-        for road_layout in _ROAD_LAYOUTS:
-            control_points: list[tuple[float, float]] = []
-            for control_point in road_layout.get("control_points", []):
-                resolved_point = self._resolve_road_control_point(dict(control_point))
-                if resolved_point is None:
-                    control_points = []
-                    break
-                control_points.append(resolved_point)
-            if len(control_points) < 2:
-                continue
-            roads.append(
-                {
-                    "id": str(road_layout.get("id", "")),
-                    "points": self._sample_road_curve(tuple(control_points)),
-                }
-            )
-        return roads
-
-    def _resolve_road_control_point(self, control_point: dict[str, Any]) -> tuple[float, float] | None:
-        point_type = str(control_point.get("point_type", "relative_map_point"))
-        if point_type == "map_object_center":
-            object_id = str(control_point.get("object_id", ""))
-            if self._map_object_bounds(object_id) is None:
-                return None
-            return self._map_object_center(object_id)
-
-        width, height = self._map_size
-        return (
-            width * float(control_point.get("anchor_x", 0.0)),
-            height * float(control_point.get("anchor_y", 0.0)),
+        return self._road_geometry_service.build_roads(
+            _ROAD_LAYOUTS,
+            map_objects=self._map_objects,
+            map_size=self._map_size,
         )
-
-    def _sample_road_curve(
-        self,
-        control_points: tuple[tuple[float, float], ...],
-    ) -> tuple[tuple[float, float], ...]:
-        if len(control_points) < 2:  # pragma: no mutate
-            return control_points  # pragma: no mutate
-
-        sampled_points: list[tuple[float, float]] = []  # pragma: no mutate
-        for index in range(len(control_points) - 1):  # pragma: no mutate
-            p0 = control_points[index - 1] if index > 0 else control_points[index]  # pragma: no mutate
-            p1 = control_points[index]  # pragma: no mutate
-            p2 = control_points[index + 1]  # pragma: no mutate
-            p3 = (  # pragma: no mutate
-                control_points[index + 2]  # pragma: no mutate
-                if index + 2 < len(control_points)  # pragma: no mutate
-                else control_points[index + 1]  # pragma: no mutate
-            )
-            for sample_index in range(_ROAD_SAMPLES_PER_SEGMENT):  # pragma: no mutate
-                t = sample_index / float(_ROAD_SAMPLES_PER_SEGMENT)  # pragma: no mutate
-                sampled_points.append(self._catmull_rom_point(p0, p1, p2, p3, t))  # pragma: no mutate
-
-        sampled_points.append(control_points[-1])  # pragma: no mutate
-        return tuple(self._deduplicate_points(sampled_points))  # pragma: no mutate
-
-    def _catmull_rom_point(
-        self,
-        p0: tuple[float, float],
-        p1: tuple[float, float],
-        p2: tuple[float, float],
-        p3: tuple[float, float],
-        t: float,
-    ) -> tuple[float, float]:
-        t2 = t * t  # pragma: no mutate
-        t3 = t2 * t  # pragma: no mutate
-        x = 0.5 * (  # pragma: no mutate
-            (2.0 * p1[0])  # pragma: no mutate
-            + (-p0[0] + p2[0]) * t  # pragma: no mutate
-            + (2.0 * p0[0] - 5.0 * p1[0] + 4.0 * p2[0] - p3[0]) * t2  # pragma: no mutate
-            + (-p0[0] + 3.0 * p1[0] - 3.0 * p2[0] + p3[0]) * t3  # pragma: no mutate
-        )
-        y = 0.5 * (  # pragma: no mutate
-            (2.0 * p1[1])  # pragma: no mutate
-            + (-p0[1] + p2[1]) * t  # pragma: no mutate
-            + (2.0 * p0[1] - 5.0 * p1[1] + 4.0 * p2[1] - p3[1]) * t2  # pragma: no mutate
-            + (-p0[1] + 3.0 * p1[1] - 3.0 * p2[1] + p3[1]) * t3  # pragma: no mutate
-        )
-        return self._clamp_road_point((x, y))  # pragma: no mutate
-
-    def _clamp_road_point(self, point: tuple[float, float]) -> tuple[float, float]:
-        width, height = self._map_size  # pragma: no mutate
-        if width <= 0 or height <= 0:  # pragma: no mutate
-            return point  # pragma: no mutate
-        return (  # pragma: no mutate
-            min(max(float(point[0]), 0.0), float(width)),  # pragma: no mutate
-            min(max(float(point[1]), 0.0), float(height)),  # pragma: no mutate
-        )
-
-    def _deduplicate_points(
-        self,
-        points: list[tuple[float, float]],
-    ) -> list[tuple[float, float]]:
-        deduplicated: list[tuple[float, float]] = []  # pragma: no mutate
-        for point in points:  # pragma: no mutate
-            if deduplicated and self._positions_match(deduplicated[-1], point, tolerance=0.1):  # pragma: no mutate
-                continue  # pragma: no mutate
-            deduplicated.append(point)  # pragma: no mutate
-        return deduplicated  # pragma: no mutate
 
     def _sync_bases_to_map_objects(self) -> None:
         synced_bases: dict[str, BaseState] = {}
@@ -1344,6 +1250,17 @@ class GameSession(LogisticsPort):
         tolerance: float = 0.5,
     ) -> bool:
         return math.hypot(first[0] - second[0], first[1] - second[1]) <= tolerance  # pragma: no mutate
+
+    def _deduplicate_points(
+        self,
+        points: Sequence[tuple[float, float]],
+    ) -> list[tuple[float, float]]:
+        deduplicated: list[tuple[float, float]] = []  # pragma: no mutate
+        for point in points:  # pragma: no mutate
+            if deduplicated and self._positions_match(deduplicated[-1], point, tolerance=0.1):  # pragma: no mutate
+                continue  # pragma: no mutate
+            deduplicated.append(point)  # pragma: no mutate
+        return deduplicated  # pragma: no mutate
 
     def _unit_can_transport_supplies(self, unit_type_id: str) -> bool:
         return UNIT_TYPE_SPECS[unit_type_id].can_transport_supplies
