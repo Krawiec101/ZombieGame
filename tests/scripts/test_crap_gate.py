@@ -32,8 +32,8 @@ SCRIPT_SPEC.loader.exec_module(CRAP_GATE)
 
 @contextmanager
 def workspace_tmp_dir() -> Path:
-    tmp_root = SCRIPT_PATH.parents[2] / ".codex-pytest-work"
-    tmp_root.mkdir(exist_ok=True)
+    tmp_root = SCRIPT_PATH.parents[2] / ".test-tmp" / "crap-gate-tests"
+    tmp_root.mkdir(parents=True, exist_ok=True)
     tmp_path = tmp_root / f"crap-gate-{uuid4().hex}"
     tmp_path.mkdir()
     try:

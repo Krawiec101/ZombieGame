@@ -30,8 +30,8 @@ REAL_RMTREE = shutil.rmtree
 
 @contextmanager
 def workspace_tmp_dir() -> Iterator[Path]:
-    tmp_root = SCRIPT_PATH.parents[1] / ".codex-pytest-work"
-    tmp_root.mkdir(exist_ok=True)
+    tmp_root = SCRIPT_PATH.parents[1] / ".test-tmp" / "cleanup-script-tests"
+    tmp_root.mkdir(parents=True, exist_ok=True)
     tmp_path = tmp_root / f"cleanup-script-{uuid4().hex}"
     tmp_path.mkdir()
     try:
@@ -47,8 +47,10 @@ def test_collect_cleanup_targets_finds_known_artifacts_and_skips_virtualenv() ->
             tmp_path / "tests" / "unit" / "__pycache__",
             tmp_path / ".pytest_cache",
             tmp_path / ".ruff_cache",
+            tmp_path / ".test-tmp",
             tmp_path / ".tmp-pip-audit",
             tmp_path / "cleanup-test-temp",
+            tmp_path / "codex-pytest-work-old",
             tmp_path / "ci_tmp_pytest",
             tmp_path / "local-pytest-temp",
             tmp_path / "pytest-cache-files-abc123",
@@ -72,8 +74,10 @@ def test_collect_cleanup_targets_finds_known_artifacts_and_skips_virtualenv() ->
         assert "tests/unit/__pycache__" in relative_targets
         assert ".pytest_cache" in relative_targets
         assert ".ruff_cache" in relative_targets
+        assert ".test-tmp" in relative_targets
         assert ".tmp-pip-audit" in relative_targets
         assert "cleanup-test-temp" in relative_targets
+        assert "codex-pytest-work-old" in relative_targets
         assert "ci_tmp_pytest" in relative_targets
         assert "local-pytest-temp" in relative_targets
         assert "pytest-cache-files-abc123" in relative_targets
