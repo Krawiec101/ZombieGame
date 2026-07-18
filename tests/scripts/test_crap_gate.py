@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import textwrap
@@ -31,9 +32,14 @@ SCRIPT_SPEC.loader.exec_module(CRAP_GATE)
 TEST_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _test_tmp_root() -> Path:
+    configured_tmp_root = os.environ.get("ZOMBIEGAME_TEST_TMP_ROOT")
+    return Path(configured_tmp_root) if configured_tmp_root else TEST_ROOT / ".test-tmp"
+
+
 @contextmanager
 def workspace_tmp_dir() -> Path:
-    tmp_root = TEST_ROOT / ".test-tmp" / "crap-gate-tests"
+    tmp_root = _test_tmp_root() / "crap-gate-tests"
     tmp_root.mkdir(parents=True, exist_ok=True)
     tmp_path = tmp_root / f"crap-gate-{uuid4().hex}"
     tmp_path.mkdir()

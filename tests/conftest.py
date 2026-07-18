@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -12,4 +13,5 @@ if str(SRC_DIR) not in sys.path:
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    config.option.basetemp = config.rootpath / ".test-tmp"
+    configured_tmp_root = os.environ.get("ZOMBIEGAME_TEST_TMP_ROOT")
+    config.option.basetemp = Path(configured_tmp_root) if configured_tmp_root else config.rootpath / ".test-tmp"

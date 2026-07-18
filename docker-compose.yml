@@ -6,6 +6,8 @@ services:
     working_dir: /app
     environment:
       - PYTHONPATH=/app
+      - PYTEST_ADDOPTS=-o cache_dir=/tmp/zombiegame-test-tmp/cache
+      - ZOMBIEGAME_TEST_TMP_ROOT=/tmp/zombiegame-test-tmp
     volumes:
       - ./:/app
     stdin_open: true

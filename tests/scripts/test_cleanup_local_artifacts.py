@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
@@ -29,15 +30,18 @@ REAL_RMTREE = shutil.rmtree
 TEST_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_pytest_tmp_path_uses_canonical_directory(tmp_path: Path) -> None:
-    canonical_tmp_root = TEST_ROOT / ".test-tmp"
+def _test_tmp_root() -> Path:
+    configured_tmp_root = os.environ.get("ZOMBIEGAME_TEST_TMP_ROOT")
+    return Path(configured_tmp_root) if configured_tmp_root else TEST_ROOT / ".test-tmp"
 
-    assert tmp_path.is_relative_to(canonical_tmp_root)
+
+def test_pytest_tmp_path_uses_canonical_directory(tmp_path: Path) -> None:
+    assert tmp_path.is_relative_to(_test_tmp_root())
 
 
 @contextmanager
 def workspace_tmp_dir() -> Iterator[Path]:
-    tmp_root = TEST_ROOT / ".test-tmp" / "cleanup-script-tests"
+    tmp_root = _test_tmp_root() / "cleanup-script-tests"
     tmp_root.mkdir(parents=True, exist_ok=True)
     tmp_path = tmp_root / f"cleanup-script-{uuid4().hex}"
     tmp_path.mkdir()
