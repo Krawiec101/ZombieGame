@@ -103,7 +103,7 @@ docker compose run --rm app sh -lc "mutmut results --all true"
 
 ## Czyszczenie lokalnych artefaktow
 
-Aby usunac lokalne cache i wygenerowane artefakty (`__pycache__`, cache testow, raporty CI, katalog `mutants`), uruchom:
+Aby usunac lokalne cache i wygenerowane artefakty (`__pycache__`, `.test-tmp`, raporty CI, katalog `mutants`), uruchom:
 
 ```bash
 .\.venv\Scripts\python.exe scripts/cleanup_local_artifacts.py

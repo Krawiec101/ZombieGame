@@ -37,4 +37,4 @@ sca-summary.md
 .codex-*/
 codex-pytest-work*/
 .tmp-*/
-pytest-temp-run-*/
+.test-tmp/

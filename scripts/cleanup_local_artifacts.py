@@ -16,10 +16,14 @@ ROOT_LEVEL_DIRECTORIES = {
     ".ruff_cache",
     "htmlcov",
     "mutants",
+    ".test-tmp",
 }
+# Kept temporarily so the canonical .test-tmp directory can replace artifacts
+# created by older local and CI commands without leaving ACL-locked directories.
 ROOT_LEVEL_DIRECTORY_PATTERNS = (
     "cleanup-test-temp*",
     ".codex-*",
+    "codex-pytest-work*",
     ".tmp-*",
     "ci_tmp_*",
     "local-pytest-temp*",

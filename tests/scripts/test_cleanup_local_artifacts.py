@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
@@ -8,6 +9,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
+
+import pytest
 
 
 def find_script_path() -> Path:
@@ -26,12 +29,24 @@ CLEANUP = importlib.util.module_from_spec(SCRIPT_SPEC)
 sys.modules[SCRIPT_SPEC.name] = CLEANUP
 SCRIPT_SPEC.loader.exec_module(CLEANUP)
 REAL_RMTREE = shutil.rmtree
+TEST_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _test_tmp_root() -> Path:
+    configured_tmp_root = os.environ.get("ZOMBIEGAME_TEST_TMP_ROOT")
+    return Path(configured_tmp_root) if configured_tmp_root else TEST_ROOT / ".test-tmp"
+
+
+def test_pytest_tmp_path_uses_configured_directory(tmp_path: Path, pytestconfig: pytest.Config) -> None:
+    configured_basetemp = Path(pytestconfig.option.basetemp).resolve()
+
+    assert tmp_path.is_relative_to(configured_basetemp)
 
 
 @contextmanager
 def workspace_tmp_dir() -> Iterator[Path]:
-    tmp_root = SCRIPT_PATH.parents[1] / ".codex-pytest-work"
-    tmp_root.mkdir(exist_ok=True)
+    tmp_root = _test_tmp_root() / "cleanup-script-tests"
+    tmp_root.mkdir(parents=True, exist_ok=True)
     tmp_path = tmp_root / f"cleanup-script-{uuid4().hex}"
     tmp_path.mkdir()
     try:
@@ -47,8 +62,10 @@ def test_collect_cleanup_targets_finds_known_artifacts_and_skips_virtualenv() ->
             tmp_path / "tests" / "unit" / "__pycache__",
             tmp_path / ".pytest_cache",
             tmp_path / ".ruff_cache",
+            tmp_path / ".test-tmp",
             tmp_path / ".tmp-pip-audit",
             tmp_path / "cleanup-test-temp",
+            tmp_path / "codex-pytest-work-old",
             tmp_path / "ci_tmp_pytest",
             tmp_path / "local-pytest-temp",
             tmp_path / "pytest-cache-files-abc123",
@@ -72,8 +89,10 @@ def test_collect_cleanup_targets_finds_known_artifacts_and_skips_virtualenv() ->
         assert "tests/unit/__pycache__" in relative_targets
         assert ".pytest_cache" in relative_targets
         assert ".ruff_cache" in relative_targets
+        assert ".test-tmp" in relative_targets
         assert ".tmp-pip-audit" in relative_targets
         assert "cleanup-test-temp" in relative_targets
+        assert "codex-pytest-work-old" in relative_targets
         assert "ci_tmp_pytest" in relative_targets
         assert "local-pytest-temp" in relative_targets
         assert "pytest-cache-files-abc123" in relative_targets
