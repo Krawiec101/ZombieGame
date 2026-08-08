@@ -402,8 +402,9 @@ def test_scaled_size_enlarges_assets_and_supports_non_uniform_scaling() -> None:
     assert game_view_module._scaled_size(30, 12, (3.0, 4.0)) == (90, 48)
 
 
-def test_unit_asset_scale_keeps_visual_within_interaction_bounds() -> None:
+def test_interactive_asset_scales_keep_visuals_within_interaction_bounds() -> None:
     assert game_view_module._scaled_size(30, 20, game_view_module._UNIT_ASSET_SCALE) == (30, 20)
+    assert game_view_module._scaled_size(22, 22, game_view_module._ZOMBIE_ASSET_SCALE) == (22, 22)
 
 
 @pytest.mark.parametrize(
