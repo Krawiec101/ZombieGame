@@ -402,6 +402,10 @@ def test_scaled_size_enlarges_assets_and_supports_non_uniform_scaling() -> None:
     assert game_view_module._scaled_size(30, 12, (3.0, 4.0)) == (90, 48)
 
 
+def test_unit_asset_scale_keeps_visual_within_interaction_bounds() -> None:
+    assert game_view_module._scaled_size(30, 20, game_view_module._UNIT_ASSET_SCALE) == (30, 20)
+
+
 @pytest.mark.parametrize(
     ("personnel", "expected_dots"),
     ((0, 1), (3, 1), (4, 2), (6, 2), (7, 3), (20, 3)),
@@ -442,7 +446,7 @@ def test_render_draws_mission_objectives_panel(game_view) -> None:
 
 
 def test_selected_unit_outline_follows_drawn_asset_size(game_view) -> None:
-    game_view.view._map_assets = SimpleNamespace(draw_centered=lambda **_kwargs: (50, 30))
+    game_view.view._map_assets = SimpleNamespace(draw_centered=lambda **_kwargs: (20, 12))
     game_view.view.apply_game_state(snapshot=_sample_game_state())
 
     game_view.view.render(character_name="", show_running_hint=False)
@@ -452,8 +456,8 @@ def test_selected_unit_outline_follows_drawn_asset_size(game_view) -> None:
         for color, rect in game_view.pygame.draw.rect_calls
         if color == (234, 224, 170)
     ]
-    assert selected_rects[0].width == 62
-    assert selected_rects[0].height == 42
+    assert selected_rects[0].width == 32
+    assert selected_rects[0].height == 24
 
 
 def test_render_draws_strikethrough_for_completed_objective(game_view) -> None:
