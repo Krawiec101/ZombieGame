@@ -72,6 +72,13 @@ def test_snapshot_exposes_typed_contract_for_ui_sync() -> None:
             name="Mala grupa zombie",
             personnel=7,
         ),
+        ZombieGroupSnapshot(
+            group_id="echo_zombies",
+            position=snapshot.enemy_groups[1].position,
+            marker_size_px=22,
+            name="Wedrujaca grupa zombie",
+            personnel=6,
+        ),
     )
     assert snapshot.selected_unit_id is None
     assert snapshot.objective_definitions == (

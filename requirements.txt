@@ -1,4 +1,4 @@
-jupyterlab==4.5.9
+jupyterlab==4.5.10
 ipykernel==6.29.5
 mypy==1.20.1
 pytest==9.0.3

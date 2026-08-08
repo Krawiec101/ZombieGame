@@ -397,6 +397,24 @@ def test_render_uses_fullscreen_map_area(game_view) -> None:
     assert map_rect.height == 640
 
 
+def test_scaled_size_enlarges_assets_and_supports_non_uniform_scaling() -> None:
+    assert game_view_module._scaled_size(84, 56, 1.35) == (113, 76)
+    assert game_view_module._scaled_size(30, 12, (3.0, 4.0)) == (90, 48)
+
+
+def test_interactive_asset_scales_keep_visuals_within_interaction_bounds() -> None:
+    assert game_view_module._scaled_size(30, 20, game_view_module._UNIT_ASSET_SCALE) == (30, 20)
+    assert game_view_module._scaled_size(22, 22, game_view_module._ZOMBIE_ASSET_SCALE) == (22, 22)
+
+
+@pytest.mark.parametrize(
+    ("personnel", "expected_dots"),
+    ((0, 1), (3, 1), (4, 2), (6, 2), (7, 3), (20, 3)),
+)
+def test_enemy_strength_dot_count_reflects_group_size(personnel: int, expected_dots: int) -> None:
+    assert game_view_module._enemy_strength_dot_count(personnel) == expected_dots
+
+
 def test_apply_game_state_updates_cached_state(game_view) -> None:
     state = _sample_game_state(combat_active=True, notification_phase="started")
 
@@ -426,6 +444,21 @@ def test_render_draws_mission_objectives_panel(game_view) -> None:
     assert "mission.objectives.title" in texts
     assert "[ ] mission.objective.supply_route_to_hq" in texts
     assert "[ ] mission.objective.find_first_missing_detachment" in texts
+
+
+def test_selected_unit_outline_follows_drawn_asset_size(game_view) -> None:
+    game_view.view._map_assets = SimpleNamespace(draw_centered=lambda **_kwargs: (20, 12))
+    game_view.view.apply_game_state(snapshot=_sample_game_state())
+
+    game_view.view.render(character_name="", show_running_hint=False)
+
+    selected_rects = [
+        rect
+        for color, rect in game_view.pygame.draw.rect_calls
+        if color == (234, 224, 170)
+    ]
+    assert selected_rects[0].width == 32
+    assert selected_rects[0].height == 24
 
 
 def test_render_draws_strikethrough_for_completed_objective(game_view) -> None:

@@ -231,6 +231,14 @@
                 "anchor_object_id": "landing_pad",
                 "name": "Mala grupa zombie",
                 "personnel": 7
+              },
+              {
+                "group_id": "echo_zombies",
+                "anchor_object_id": "recon_site_1",
+                "offset_x": 18.0,
+                "offset_y": 12.0,
+                "name": "Wedrujaca grupa zombie",
+                "personnel": 6
               }
             ],
             "reinforcements": [

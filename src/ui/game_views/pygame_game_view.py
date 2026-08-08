@@ -25,6 +25,7 @@ from ui.game_views.geometry import (
     road_anchor_for_point,
     supply_route_points,
 )
+from ui.game_views.map_assets import MapAssetCatalog
 from ui.game_views.view_content import (
     TooltipContent,
     base_detail_lines,
@@ -47,6 +48,10 @@ _MAP_OBJECT_STYLES: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]]
 _UNIT_MARKER_STYLES: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
     "infantry_squad": ((208, 186, 104), (78, 66, 28)),
     "mechanized_squad": ((138, 173, 112), (42, 74, 38)),
+}
+_UNIT_ASSET_IDS = {
+    "infantry_squad": "nato_infantry",
+    "mechanized_squad": "nato_mechanized",
 }
 _ENEMY_GROUP_STYLE = {
     "fill": (146, 74, 74),
@@ -73,6 +78,23 @@ _SUPPLY_TRANSPORT_STYLES: dict[str, dict[str, Any]] = {
     },
 }
 _RECON_SITE_STYLE = ((132, 110, 84), (214, 192, 146))
+_MAP_OBJECT_ASSET_SCALE = 1.35
+_UNIT_ASSET_SCALE = 1.0
+_ZOMBIE_ASSET_SCALE = 1.0
+_SUPPLY_TRANSPORT_ASSET_SCALE = (3.5, 4.5)
+
+
+def _scaled_size(width: int, height: int, scale: float | tuple[float, float]) -> tuple[int, int]:
+    scale_x, scale_y = (scale, scale) if isinstance(scale, float) else scale
+    return (round(width * scale_x), round(height * scale_y))
+
+
+def _enemy_strength_dot_count(personnel: int) -> int:
+    if personnel <= 3:
+        return 1
+    if personnel <= 6:
+        return 2
+    return 3
 
 
 class PygameGameView:
@@ -90,6 +112,7 @@ class PygameGameView:
         self._font_title = font_title
         self._font_menu = font_menu
         self._font_hint = font_hint
+        self._map_assets = MapAssetCatalog(pygame_module=pygame_module)
         self._map_rect: Any | None = None
         self._map_objects: list[MapObjectSnapshot] = []
         self._roads: list[RoadSnapshot] = []
@@ -226,7 +249,18 @@ class PygameGameView:
         for map_object in self._map_objects:
             fill_color, border_color = self._map_object_style(map_object.object_id)
             object_rect = self._rect_from_bounds(map_object.bounds)
-            pygame.draw.rect(self._screen, fill_color, object_rect, border_radius=8)
+            asset_drawn = self._map_assets.draw_centered(
+                screen=self._screen,
+                asset_id=map_object.object_id,
+                center=(object_rect.left + object_rect.width // 2, object_rect.top + object_rect.height // 2),
+                maximum_size=_scaled_size(
+                    object_rect.width,
+                    object_rect.height,
+                    _MAP_OBJECT_ASSET_SCALE,
+                ),
+            )
+            if not asset_drawn:
+                pygame.draw.rect(self._screen, fill_color, object_rect, border_radius=8)
             pygame.draw.rect(self._screen, border_color, object_rect, 2, border_radius=8)
 
     def _draw_supply_routes(self) -> None:
@@ -276,6 +310,18 @@ class PygameGameView:
                 width=style["size"][0],
                 height=style["size"][1],
             )
+            sprite_size = _scaled_size(
+                body_rect.width,
+                body_rect.height,
+                _SUPPLY_TRANSPORT_ASSET_SCALE,
+            )
+            if self._map_assets.draw_centered(
+                screen=self._screen,
+                asset_id="supply_helicopter",
+                center=(body_rect.left + body_rect.width // 2, body_rect.top + body_rect.height // 2),
+                maximum_size=sprite_size,
+            ):
+                continue
             pygame.draw.rect(self._screen, style["fill"], body_rect, border_radius=6)
             pygame.draw.rect(self._screen, style["border"], body_rect, 2, border_radius=6)
             rotor_y = body_rect.top - 4
@@ -310,20 +356,36 @@ class PygameGameView:
                 ((180, 180, 180), (72, 72, 72)),
             )
             unit_rect = self._get_unit_rect(unit)
-            pygame.draw.rect(self._screen, fill_color, unit_rect, border_radius=5)
+            sprite_size = _scaled_size(
+                unit_rect.width,
+                unit_rect.height,
+                _UNIT_ASSET_SCALE,
+            )
+            drawn_size = self._map_assets.draw_centered(
+                screen=self._screen,
+                asset_id=_UNIT_ASSET_IDS.get(unit.unit_type_id, unit.unit_type_id),
+                center=(unit_rect.left + unit_rect.width // 2, unit_rect.top + unit_rect.height // 2),
+                maximum_size=sprite_size,
+            )
+            if drawn_size is None:
+                pygame.draw.rect(self._screen, fill_color, unit_rect, border_radius=5)
+                drawn_size = (unit_rect.width, unit_rect.height)
+            visual_width, visual_height = drawn_size
+            center_x = unit_rect.left + unit_rect.width // 2
+            center_y = unit_rect.top + unit_rect.height // 2
             selection_rect = pygame.Rect(
-                unit_rect.left - 1,
-                unit_rect.top - 1,
-                unit_rect.width + 2,
-                unit_rect.height + 2,
+                center_x - visual_width // 2 - 2,
+                center_y - visual_height // 2 - 2,
+                visual_width + 4,
+                visual_height + 4,
             )
             pygame.draw.rect(self._screen, border_color, selection_rect, 2, border_radius=6)
             if unit.unit_id == self._selected_unit_id:
                 selected_rect = pygame.Rect(
-                    unit_rect.left - 5,
-                    unit_rect.top - 5,
-                    unit_rect.width + 10,
-                    unit_rect.height + 10,
+                    center_x - visual_width // 2 - 6,
+                    center_y - visual_height // 2 - 6,
+                    visual_width + 12,
+                    visual_height + 12,
                 )
                 pygame.draw.rect(self._screen, (234, 224, 170), selected_rect, 2, border_radius=8)
             if unit.is_in_combat:
@@ -339,8 +401,37 @@ class PygameGameView:
         pygame = self._pygame
         for enemy_group in self._enemy_groups:
             enemy_rect = self._get_enemy_group_rect(enemy_group)
-            pygame.draw.rect(self._screen, _ENEMY_GROUP_STYLE["fill"], enemy_rect, border_radius=6)
+            sprite_size = _scaled_size(enemy_rect.width, enemy_rect.height, _ZOMBIE_ASSET_SCALE)
+            asset_drawn = self._map_assets.draw_centered(
+                screen=self._screen,
+                asset_id="zombie_group",
+                center=(enemy_rect.left + enemy_rect.width // 2, enemy_rect.top + enemy_rect.height // 2),
+                maximum_size=sprite_size,
+            )
+            if not asset_drawn:
+                pygame.draw.rect(self._screen, _ENEMY_GROUP_STYLE["fill"], enemy_rect, border_radius=6)
             pygame.draw.rect(self._screen, _ENEMY_GROUP_STYLE["border"], enemy_rect, 2, border_radius=6)
+            self._draw_enemy_strength_dots(enemy_group, enemy_rect, sprite_size)
+
+    def _draw_enemy_strength_dots(
+        self,
+        enemy_group: ZombieGroupSnapshot,
+        enemy_rect: Any,
+        sprite_size: tuple[int, int],
+    ) -> None:
+        dot_count = _enemy_strength_dot_count(enemy_group.personnel)
+        dot_radius = 4
+        dot_gap = 13
+        center_x = enemy_rect.left + enemy_rect.width // 2
+        first_x = center_x - (dot_count - 1) * dot_gap // 2
+        dot_y = enemy_rect.top + enemy_rect.height // 2 - sprite_size[1] // 2 - 8
+        for index in range(dot_count):
+            self._pygame.draw.circle(
+                self._screen,
+                (238, 38, 50),
+                (first_x + index * dot_gap, dot_y),
+                dot_radius,
+            )
 
     def _draw_mission_objectives_panel(self) -> None:
         if not self._mission_objectives:

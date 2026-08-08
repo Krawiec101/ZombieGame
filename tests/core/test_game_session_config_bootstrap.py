@@ -18,6 +18,13 @@ def test_game_session_initializes_map_objects_and_units() -> None:
             name="Mala grupa zombie",
             personnel=7,
         ),
+        ZombieGroupSnapshot(
+            group_id="echo_zombies",
+            position=session.enemy_groups_snapshot()[1].position,
+            marker_size_px=22,
+            name="Wedrujaca grupa zombie",
+            personnel=6,
+        ),
     )
 
 def test_commander_state_from_config_coerces_values_and_applies_basic_default() -> None:

@@ -107,7 +107,7 @@ def test_active_combat_stops_unit_movement_until_enemy_group_is_cleared() -> Non
             break
 
     assert session.combats_snapshot() == ()
-    assert session.enemy_groups_snapshot() == ()
+    assert tuple(group.group_id for group in session.enemy_groups_snapshot()) == ("echo_zombies",)
 
 def test_start_combats_does_not_assign_enemy_group_to_second_unit_when_already_engaged() -> None:
     session = create_default_game_session()
